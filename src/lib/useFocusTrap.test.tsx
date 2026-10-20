@@ -9,7 +9,7 @@ describe('useFocusTrap', () => {
 
     function Trap() {
       const containerRef = useRef<HTMLDivElement>(null);
-      useFocusTrap(containerRef);
+      useFocusTrap(containerRef, true);
       return (
         <div ref={containerRef}>
           <button type="button">Only</button>
@@ -32,7 +32,7 @@ describe('useFocusTrap', () => {
 
     function Trap() {
       const containerRef = useRef<HTMLDivElement>(null);
-      useFocusTrap(containerRef);
+      useFocusTrap(containerRef, true);
       return (
         <div ref={containerRef}>
           <button type="button">Only</button>

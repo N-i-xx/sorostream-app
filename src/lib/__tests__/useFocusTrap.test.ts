@@ -1,6 +1,5 @@
 import { renderHook } from '@testing-library/react';
-import { useRef } from 'react';
-import { useFocusTrap } from '../useFocusTrap';
+import { useFocusTrap, getFocusableElements } from '../useFocusTrap';
 
 describe('useFocusTrap', () => {
   let container: HTMLDivElement;
@@ -14,16 +13,10 @@ describe('useFocusTrap', () => {
     document.body.removeChild(container);
   });
 
-  function setupTrap() {
-    const { result } = renderHook(() => {
-      const ref = useRef<HTMLDivElement>(null);
-      useFocusTrap(ref);
-      return ref;
-    });
-
-    // Attach the container to the ref so the hook can query focusable elements.
-    (result.current as { current: HTMLDivElement | null }).current = container;
-    return result;
+  function setupTrap(active = true) {
+    const ref = { current: container as HTMLDivElement | null };
+    renderHook(() => useFocusTrap(ref, active));
+    return ref;
   }
 
   function pressKey(key: string, shiftKey = false) {
@@ -61,5 +54,98 @@ describe('useFocusTrap', () => {
     pressKey('Tab', true);
 
     expect(document.activeElement).toBe(button);
+  });
+});
+
+describe('getFocusableElements', () => {
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+  });
+
+  afterEach(() => {
+    document.body.removeChild(container);
+  });
+
+  it('still returns every visible focusable element', () => {
+    container.innerHTML = `
+      <a href="#section" id="link">Link</a>
+      <input id="visible-input" />
+      <button id="visible-button">Go</button>
+    `;
+
+    expect(getFocusableElements(container).map((el) => el.id)).toEqual([
+      'link',
+      'visible-input',
+      'visible-button',
+    ]);
+  });
+
+  it('skips inputs inside a collapsed section hidden with display:none', () => {
+    container.innerHTML = `
+      <button id="first">First</button>
+      <section style="display: none">
+        <input id="hidden-input" />
+        <button id="hidden-button">Hidden</button>
+      </section>
+      <button id="last">Last</button>
+    `;
+
+    expect(getFocusableElements(container).map((el) => el.id)).toEqual([
+      'first',
+      'last',
+    ]);
+  });
+
+  it('skips elements hidden via visibility:hidden', () => {
+    container.innerHTML = `
+      <button id="first">First</button>
+      <input id="hidden-input" style="visibility: hidden" />
+      <button id="last">Last</button>
+    `;
+
+    expect(getFocusableElements(container).map((el) => el.id)).toEqual([
+      'first',
+      'last',
+    ]);
+  });
+
+  it('does not let the trap cycle onto inputs in a collapsed section', () => {
+    // The collapsed input comes last in DOM order, so if the trap treated it as
+    // the last stop, Tab from #last would not wrap and Shift+Tab from #first
+    // would move focus into the invisible input.
+    container.innerHTML = `
+      <button id="first">First</button>
+      <button id="last">Last</button>
+      <div class="collapsed-section" style="display: none">
+        <input id="hidden-input" />
+      </div>
+    `;
+    const first = container.querySelector<HTMLButtonElement>('#first')!;
+    const last = container.querySelector<HTMLButtonElement>('#last')!;
+
+    const ref = { current: container as HTMLDivElement | null };
+    renderHook(() => useFocusTrap(ref, true));
+
+    const tab = (shiftKey: boolean) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      container.dispatchEvent(event);
+      return event;
+    };
+
+    last.focus();
+    expect(tab(false).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+
+    first.focus();
+    expect(tab(true).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(last);
   });
 });
