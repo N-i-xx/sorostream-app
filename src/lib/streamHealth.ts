@@ -15,6 +15,27 @@
  * claim, and funds still waiting to be withdrawn. `getStreamHealthDetails`
  * returns the same status plus a `hasUnclaimedBalance` flag that tells them
  * apart (#717).
+ *
+ * ## Extending the priority chain (#688)
+ *
+ * The five statuses above are just the default rule list (`DEFAULT_HEALTH_RULES`).
+ * An application-specific status can be slotted into the chain at any position
+ * by passing extra rules to `resolveStreamHealth`, without editing this file:
+ *
+ * ```ts
+ * const DISPUTED: HealthStatusRule<"Disputed"> = {
+ *   status: "Disputed",
+ *   // Between Cancelled (500) and Paused (400) → highest non-terminal override.
+ *   priority: HEALTH_STATUS_PRIORITY.Paused + 50,
+ *   matches: ({ stream }) => stream.disputed === true,
+ * };
+ *
+ * resolveStreamHealth(stream, now, [DISPUTED]); // "Disputed" | StreamHealthStatus
+ * ```
+ *
+ * Rules are evaluated from highest `priority` to lowest; ties keep registration
+ * order (defaults first). With no extra rules the output is identical to the
+ * original five-status behaviour.
  */
 
 /** Threshold (ms) before end time when we call a stream "Expiring Soon". */
@@ -28,6 +49,20 @@ export type StreamHealthStatus =
   | "Cancelled";
 
 /**
+ * Priority of each built-in status — higher wins.
+ *
+ * Spread `HEALTH_STATUS_PRIORITY.Cancelled + 1` (or another built-in's value
+ * ± an offset) to place a custom rule directly above/below a built-in one.
+ */
+export const HEALTH_STATUS_PRIORITY = {
+  Cancelled: 500,
+  Paused: 400,
+  Expired: 300,
+  "Expiring Soon": 200,
+  Active: 100,
+} as const satisfies Record<StreamHealthStatus, number>;
+
+/**
  * Minimum shape needed to compute health. Both `StreamData` (sorostream.ts)
  * and any future on-chain type satisfy this interface.
  */
@@ -36,6 +71,106 @@ export interface HealthStreamInput {
   endTime: string; // ISO-8601
   startTime?: string; // ISO-8601 (optional, used for cliff logic)
   cliffTime?: string; // ISO-8601 (optional)
+}
+
+/** Everything a status rule needs to decide whether it applies. */
+export interface HealthRuleContext {
+  /** The stream being evaluated. */
+  stream: HealthStreamInput;
+  /** Current timestamp in ms. */
+  now: number;
+  /** `stream.endTime` parsed to ms — `NaN` when unparseable. */
+  endMs: number;
+}
+
+/**
+ * A single step in the health-resolution chain.
+ *
+ * `priority` decides where the rule sits: higher wins. A rule whose `matches`
+ * returns false is skipped and evaluation falls through to the next one.
+ */
+export interface HealthStatusRule<S extends string = StreamHealthStatus> {
+  /** Status reported when this rule matches. */
+  status: S;
+  /** Higher values are evaluated first. See `HEALTH_STATUS_PRIORITY`. */
+  priority: number;
+  /** Predicate deciding whether the stream reports `status`. */
+  matches: (ctx: HealthRuleContext) => boolean;
+}
+
+/**
+ * The built-in five-status chain, in default priority order. Exposed so
+ * callers can inspect or compose it; treat it as immutable.
+ */
+export const DEFAULT_HEALTH_RULES: readonly HealthStatusRule[] = [
+  {
+    status: "Cancelled",
+    priority: HEALTH_STATUS_PRIORITY.Cancelled,
+    matches: ({ stream }) => stream.status === "Cancelled",
+  },
+  {
+    status: "Paused",
+    priority: HEALTH_STATUS_PRIORITY.Paused,
+    matches: ({ stream }) => stream.status === "Paused",
+  },
+  {
+    status: "Expired",
+    priority: HEALTH_STATUS_PRIORITY.Expired,
+    // A guard for unparseable endTime also lands here (treated as Expired to
+    // avoid silent bugs); status === "Ended" or a passed endTime likewise.
+    matches: ({ stream, now, endMs }) =>
+      Number.isNaN(endMs) || stream.status === "Ended" || now >= endMs,
+  },
+  {
+    status: "Expiring Soon",
+    priority: HEALTH_STATUS_PRIORITY["Expiring Soon"],
+    matches: ({ now, endMs }) => endMs - now < EXPIRING_SOON_THRESHOLD_MS,
+  },
+  {
+    status: "Active",
+    priority: HEALTH_STATUS_PRIORITY.Active,
+    matches: () => true,
+  },
+];
+
+/**
+ * Resolve a stream's health status, optionally with extra application-specific
+ * status rules injected into the priority chain (#688).
+ *
+ * Extra rules never modify the built-in five: when `extraRules` is empty the
+ * result is exactly what `getStreamHealth` returns.
+ *
+ * @param stream      Raw stream data (any object with the fields above).
+ * @param now         Current timestamp in ms — injectable for deterministic
+ *                    tests. Defaults to `Date.now()`.
+ * @param extraRules  Additional status rules. A rule with a priority between
+ *                    two built-ins is checked between them.
+ * @returns           The highest-priority matching status.
+ */
+export function resolveStreamHealth<Extra extends string = never>(
+  stream: HealthStreamInput,
+  now: number = Date.now(),
+  extraRules: readonly HealthStatusRule<Extra>[] = [],
+): StreamHealthStatus | Extra {
+  const ctx: HealthRuleContext = {
+    stream,
+    now,
+    endMs: new Date(stream.endTime).getTime(),
+  };
+
+  const ordered = [...DEFAULT_HEALTH_RULES, ...extraRules]
+    .map((rule, index) => ({ rule, index }))
+    // Highest priority first; ties keep registration order (built-ins first),
+    // and Array.prototype.sort is stable in all supported runtimes anyway.
+    .sort((a, b) => b.rule.priority - a.rule.priority || a.index - b.index);
+
+  for (const { rule } of ordered) {
+    if (rule.matches(ctx)) return rule.status;
+  }
+
+  // Unreachable while the default "Active" rule is present, but keeps the
+  // return type honest if a caller ever filters the default chain.
+  return "Active";
 }
 
 /**
@@ -50,30 +185,12 @@ export function getStreamHealth(
   stream: HealthStreamInput,
   now: number = Date.now(),
 ): StreamHealthStatus {
-  // 1. Cancelled always wins
-  if (stream.status === "Cancelled") return "Cancelled";
-
-  // 2. Paused always wins over time-based calculations
-  if (stream.status === "Paused") return "Paused";
-
-  const endMs = new Date(stream.endTime).getTime();
-
-  // Guard: if endTime is unparseable, treat as Expired to avoid silent bugs
-  if (isNaN(endMs)) return "Expired";
-
-  // 3. Stream has already ended (endTime in the past, or status === "Ended")
-  if (stream.status === "Ended" || now >= endMs) return "Expired";
-
-  // 4. Stream ends within the next 24 hours
-  if (endMs - now < EXPIRING_SOON_THRESHOLD_MS) return "Expiring Soon";
-
-  // 5. Normal running state
-  return "Active";
+  return resolveStreamHealth(stream, now);
 }
 
-export interface StreamHealthDetails {
-  /** Same value `getStreamHealth` returns; priority order is unchanged. */
-  status: StreamHealthStatus;
+export interface StreamHealthDetails<S extends string = StreamHealthStatus> {
+  /** Same value `resolveStreamHealth` returns; priority order is unchanged. */
+  status: S;
   /**
    * True only when the stream is Expired and the recipient still has a
    * nonzero balance to withdraw. False for every other status.
@@ -90,13 +207,15 @@ export interface StreamHealthDetails {
  *                          Accepts a number or a numeric string (as returned
  *                          by `claimableNow`). Invalid values count as zero.
  * @param now               Current timestamp in ms. Defaults to `Date.now()`.
+ * @param extraRules        Additional status rules (see `resolveStreamHealth`).
  */
-export function getStreamHealthDetails(
+export function getStreamHealthDetails<Extra extends string = never>(
   stream: HealthStreamInput,
   unclaimedStroops: number | string | bigint,
   now: number = Date.now(),
-): StreamHealthDetails {
-  const status = getStreamHealth(stream, now);
+  extraRules: readonly HealthStatusRule<Extra>[] = [],
+): StreamHealthDetails<StreamHealthStatus | Extra> {
+  const status = resolveStreamHealth(stream, now, extraRules);
   return {
     status,
     hasUnclaimedBalance: status === "Expired" && isPositiveAmount(unclaimedStroops),
@@ -113,6 +232,9 @@ function isPositiveAmount(value: number | string | bigint): boolean {
  * Badge colour mapping — Tailwind classes keyed by StreamHealthStatus.
  * Import this alongside getStreamHealth to keep badge styling co-located with
  * the logic.
+ *
+ * Application-specific statuses added via `resolveStreamHealth` need their own
+ * styling; look them up with a fallback rather than casting into this record.
  */
 export const HEALTH_BADGE_CLASSES: Record<StreamHealthStatus, string> = {
   Active: "bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-400",
