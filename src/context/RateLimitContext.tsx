@@ -10,12 +10,20 @@ import {
 } from "react";
 import { onRateLimit, type RateLimitInfo } from "@/src/lib/rpcClient";
 
-interface RateLimitContextValue {
+/**
+ * Rate-limit state shared with every consumer of the context (banner, debug
+ * panels, request loggers, …).
+ */
+export interface RateLimitContextValue {
   /** True when an RPC 429 backoff is currently counting down. */
   active: boolean;
   /** Seconds remaining in the current backoff. */
   secondsLeft: number;
-  /** Retry attempt index in progress. */
+  /**
+   * Zero-based index of the retry attempt currently in progress. It increments
+   * on every consecutive retry within one `rpcFetch` call (0 for the first
+   * retry, 1 for the second, …) and is 0 while no rate limit is active.
+   */
   attempt: number;
 }
 
