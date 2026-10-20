@@ -153,3 +153,89 @@ describe("#454 — useKeyboardShortcuts", () => {
     expect(action).not.toHaveBeenCalled();
   });
 });
+
+describe("#696 — ignoreWhenEditing and contentEditable regions", () => {
+  const created: HTMLElement[] = [];
+
+  /** A contentEditable host that jsdom can actually focus (needs a tabindex). */
+  function makeContentEditable(): { host: HTMLElement; focusTarget: HTMLElement } {
+    const host = document.createElement("div");
+    host.setAttribute("contenteditable", "true");
+    host.tabIndex = 0;
+    const focusTarget = document.createElement("span");
+    focusTarget.tabIndex = -1;
+    focusTarget.textContent = "typing…";
+    host.appendChild(focusTarget);
+    document.body.appendChild(host);
+    created.push(host);
+    return { host, focusTarget };
+  }
+
+  function groupsFor(action: () => void): ShortcutGroup[] {
+    return [{ title: "Test", shortcuts: [{ key: "n", description: "New stream", action }] }];
+  }
+
+  afterEach(() => {
+    for (const el of created.splice(0)) el.remove();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+
+  it("suppresses a shortcut while focus is inside a contentEditable element", () => {
+    const action = vi.fn();
+    const { host } = makeContentEditable();
+    host.focus();
+    expect(document.activeElement).toBe(host); // sanity: the host really has focus
+
+    renderHook(() => useKeyboardShortcuts(groupsFor(action)));
+    fireKey("n");
+
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a shortcut when a nested node inside contentEditable has focus", () => {
+    const action = vi.fn();
+    const { focusTarget } = makeContentEditable();
+    focusTarget.focus();
+    expect(document.activeElement).toBe(focusTarget);
+
+    renderHook(() => useKeyboardShortcuts(groupsFor(action)));
+    fireKey("n");
+
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it("still fires inside a contentEditable region when ignoreWhenEditing=false", () => {
+    const action = vi.fn();
+    const { host } = makeContentEditable();
+    host.focus();
+
+    const groups: ShortcutGroup[] = [
+      {
+        title: "Test",
+        shortcuts: [
+          { key: "/", description: "Focus search", action, ignoreWhenEditing: false },
+        ],
+      },
+    ];
+
+    renderHook(() => useKeyboardShortcuts(groups));
+    fireKey("/");
+
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires normally when focus is on a plain (non-editable) element", () => {
+    const action = vi.fn();
+    const plain = document.createElement("div");
+    plain.tabIndex = 0;
+    document.body.appendChild(plain);
+    created.push(plain);
+    plain.focus();
+    expect(document.activeElement).toBe(plain);
+
+    renderHook(() => useKeyboardShortcuts(groupsFor(action)));
+    fireKey("n");
+
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+});
