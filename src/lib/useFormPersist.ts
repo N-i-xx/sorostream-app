@@ -20,39 +20,70 @@ export interface CreateStreamDraft {
 /** The key under which the draft is stored in sessionStorage. */
 export const FORM_DRAFT_KEY = "sorostream_create_stream_draft";
 
+/**
+ * Schema version of the persisted draft.
+ *
+ * Bump this whenever the shape of `CreateStreamDraft` changes (a field is
+ * renamed, removed, or changes type). Drafts written under any other version
+ * are discarded on read instead of being partially applied to the form.
+ */
+export const FORM_DRAFT_SCHEMA_VERSION = 1;
+
+/** The envelope written to sessionStorage, carrying the schema version. */
+interface PersistedDraft {
+  version: number;
+  draft: CreateStreamDraft;
+}
+
 // ---------------------------------------------------------------------------
 // Low-level helpers (pure functions — easy to unit-test independently)
 // ---------------------------------------------------------------------------
 
 /**
  * Read and parse a draft from sessionStorage.
- * Returns `null` on any error (missing key, malformed JSON, wrong shape).
+ * Returns `null` on any error (missing key, malformed JSON, wrong shape) and
+ * discards any draft whose schema version does not match the current one, so
+ * a draft saved by a different app version can never populate the form.
  */
 export function readDraft(): CreateStreamDraft | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.sessionStorage.getItem(FORM_DRAFT_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<CreateStreamDraft>;
-    // Validate that at least the required string keys exist so we never
-    // restore a stale draft from a different schema version.
+    const parsed = JSON.parse(raw) as Partial<PersistedDraft> | null;
+    if (typeof parsed !== "object" || parsed === null) {
+      clearDraft();
+      return null;
+    }
+    // Missing (pre-versioning) or mismatched version: drop the draft wholesale
+    // rather than applying fields that may no longer mean the same thing.
+    if (parsed.version !== FORM_DRAFT_SCHEMA_VERSION) {
+      clearDraft();
+      return null;
+    }
+    const draft = parsed.draft as Partial<CreateStreamDraft> | undefined;
+    if (typeof draft !== "object" || draft === null) {
+      clearDraft();
+      return null;
+    }
+    // Validate that at least the required keys exist with the expected types.
     if (
-      typeof parsed.recipient !== "string" ||
-      typeof parsed.amount !== "string" ||
-      typeof parsed.duration !== "number" ||
-      typeof parsed.selectedToken !== "string"
+      typeof draft.recipient !== "string" ||
+      typeof draft.amount !== "string" ||
+      typeof draft.duration !== "number" ||
+      typeof draft.selectedToken !== "string"
     ) {
       clearDraft();
       return null;
     }
     return {
-      recipient: parsed.recipient ?? "",
-      amount: parsed.amount ?? "",
-      duration: parsed.duration ?? 0,
-      selectedToken: parsed.selectedToken ?? "USDC",
-      customTokenAddress: parsed.customTokenAddress ?? "",
-      endDate: parsed.endDate ?? "",
-      cliffDate: parsed.cliffDate ?? "",
+      recipient: draft.recipient,
+      amount: draft.amount,
+      duration: draft.duration,
+      selectedToken: draft.selectedToken,
+      customTokenAddress: draft.customTokenAddress ?? "",
+      endDate: draft.endDate ?? "",
+      cliffDate: draft.cliffDate ?? "",
     };
   } catch {
     return null;
@@ -63,7 +94,11 @@ export function readDraft(): CreateStreamDraft | null {
 export function writeDraft(draft: CreateStreamDraft): void {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.setItem(FORM_DRAFT_KEY, JSON.stringify(draft));
+    const persisted: PersistedDraft = {
+      version: FORM_DRAFT_SCHEMA_VERSION,
+      draft,
+    };
+    window.sessionStorage.setItem(FORM_DRAFT_KEY, JSON.stringify(persisted));
   } catch {
     // sessionStorage may be unavailable (private mode quota, security policy)
   }

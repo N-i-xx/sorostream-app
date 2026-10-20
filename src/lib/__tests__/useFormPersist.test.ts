@@ -2,8 +2,10 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FORM_DRAFT_KEY,
+  FORM_DRAFT_SCHEMA_VERSION,
   readDraft,
   useFormPersist,
+  writeDraft,
   type CreateStreamDraft,
 } from "@/src/lib/useFormPersist";
 
@@ -46,6 +48,47 @@ describe("useFormPersist", () => {
 
     expect(window.sessionStorage.getItem(FORM_DRAFT_KEY)).toBeNull();
     expect(readDraft()).toBeNull();
+  });
+
+  it("writes the current schema version alongside the draft", () => {
+    writeDraft(draft);
+
+    expect(JSON.parse(window.sessionStorage.getItem(FORM_DRAFT_KEY)!)).toEqual({
+      version: FORM_DRAFT_SCHEMA_VERSION,
+      draft,
+    });
+    expect(readDraft()).toEqual(draft);
+  });
+
+  it("discards an old-shape draft that has no schema version", () => {
+    // Shape written before versioning was introduced (#693).
+    window.sessionStorage.setItem(FORM_DRAFT_KEY, JSON.stringify(draft));
+
+    expect(readDraft()).toBeNull();
+    expect(window.sessionStorage.getItem(FORM_DRAFT_KEY)).toBeNull();
+  });
+
+  it("discards a draft saved under a different schema version", () => {
+    window.sessionStorage.setItem(
+      FORM_DRAFT_KEY,
+      JSON.stringify({ version: FORM_DRAFT_SCHEMA_VERSION + 1, draft }),
+    );
+
+    expect(readDraft()).toBeNull();
+    expect(window.sessionStorage.getItem(FORM_DRAFT_KEY)).toBeNull();
+  });
+
+  it("discards a current-version draft whose payload has the wrong shape", () => {
+    window.sessionStorage.setItem(
+      FORM_DRAFT_KEY,
+      JSON.stringify({
+        version: FORM_DRAFT_SCHEMA_VERSION,
+        draft: { recipient: "G...", amount: 25 },
+      }),
+    );
+
+    expect(readDraft()).toBeNull();
+    expect(window.sessionStorage.getItem(FORM_DRAFT_KEY)).toBeNull();
   });
 
   it("keeps persisting new edits made after a clear", () => {
