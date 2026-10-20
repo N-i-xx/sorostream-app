@@ -47,12 +47,18 @@ async function fetchStellarExpert(): Promise<number> {
 /**
  * Returns the current XLM/USD price, using a 5-minute cache.
  * Returns `null` if both sources are unavailable.
+ *
+ * @param options.force Bypass the cache and fetch a fresh price (used by the
+ *   shared context's manual refresh). Falls back to the stale cache value if
+ *   both feeds are unreachable.
  */
-export async function getXlmUsdPrice(): Promise<number | null> {
+export async function getXlmUsdPrice(
+  options: { force?: boolean } = {},
+): Promise<number | null> {
   const now = Date.now();
 
-  // Return cached value if still fresh.
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
+  // Return cached value if still fresh, unless a fresh fetch was requested.
+  if (!options.force && cache && now - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.price;
   }
 
