@@ -32,6 +32,7 @@ import {
 import { dispatchWebhook } from "@/src/lib/webhooks";
 import { useToast } from "@/src/lib/toast";
 import PerStreamNotificationSettings from "@/src/components/PerStreamNotificationSettings";
+import PushDeviceStatusBanner from "@/src/components/PushDeviceStatusBanner";
 import { checkStreamNotifications } from "@/src/lib/streamNotificationWatcher";
 
 // claimableThreshold (the numeric threshold value, not the "...Enabled" flag
@@ -316,6 +317,9 @@ export default function NotificationSettingsPage() {
             <p className="text-yellow-400 text-xs">Push notifications aren&apos;t supported in this browser.</p>
           )}
         </div>
+
+        {/* Per-device push setup check (#690) */}
+        <PushDeviceStatusBanner />
 
         {/* Email */}
         <div className="bg-gray-800 rounded-xl p-6 space-y-4 mb-6">
