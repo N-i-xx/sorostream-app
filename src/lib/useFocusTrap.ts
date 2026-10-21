@@ -6,8 +6,54 @@ import { pushModal, removeModal, isTopModal } from "./modalStack";
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function getFocusableElements(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+/**
+ * Whether the current DOM implementation reports real layout boxes.
+ *
+ * Browsers lay elements out, so a rendered element has a non-empty client
+ * rect. jsdom (used by our tests) has no layout engine and reports an empty
+ * rect for *every* element, so trusting rects there would hide every
+ * focusable element. The capability is probed once via the root element.
+ */
+let layoutSupport: boolean | null = null;
+function hasLayoutSupport(): boolean {
+  if (typeof document === "undefined") return false;
+  if (layoutSupport === null) {
+    const rootRect = document.documentElement.getBoundingClientRect();
+    layoutSupport = rootRect.width > 0 || rootRect.height > 0;
+  }
+  return layoutSupport;
+}
+
+/**
+ * Whether `el` is actually rendered, i.e. can receive focus.
+ *
+ * Elements inside a collapsed section (`display: none` on any ancestor) keep
+ * matching `FOCUSABLE_SELECTOR` but have no layout box, so focusing them would
+ * move focus to something invisible.
+ */
+function isRendered(el: HTMLElement, layoutIsSupported: boolean): boolean {
+  // `visibility` inherits but can be re-enabled by a descendant, so only the
+  // element's own computed value matters.
+  const { visibility } = window.getComputedStyle(el);
+  if (visibility === "hidden" || visibility === "collapse") return false;
+
+  // `display: none` on the element or any ancestor removes its layout box.
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    if (window.getComputedStyle(node).display === "none") return false;
+  }
+
+  // Belt-and-braces for browsers: no layout box means no focus.
+  if (layoutIsSupported && el.getClientRects().length === 0) return false;
+
+  return true;
+}
+
+/** All focusable elements inside `container` that are actually rendered. */
+export function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  const layoutIsSupported = hasLayoutSupport();
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+  ).filter((el) => isRendered(el, layoutIsSupported));
 }
 
 /**
