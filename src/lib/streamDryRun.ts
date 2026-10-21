@@ -12,8 +12,15 @@
 import { calculateVestingSchedule } from "./vestingSchedule";
 import { calcWithdrawBreakdown } from "./sorostream";
 
-/** Progress markers sampled by the dry run. */
+/** Progress markers sampled by the dry run when the caller supplies none. */
 export const DRY_RUN_PROGRESS_MARKERS = [0, 0.25, 0.5, 0.75, 1] as const;
+
+/**
+ * Vesting samples behind the checkpoint lookup: 1001 points = 0.1% of the
+ * stream, so a custom marker resolves to the nearest 0.1% of the timeline
+ * and cliff-adjacent markers land on the correct side of the cliff (#687).
+ */
+const DRY_RUN_SAMPLE_COUNT = 1001;
 
 export interface DryRunCheckpoint {
   /** Fraction of the stream elapsed at this checkpoint (0..1). */
@@ -39,6 +46,13 @@ export interface StreamDryRunInput {
   feeBasisPoints?: number;
   /** Stream start time (Unix seconds). Defaults to now. */
   startTime?: number;
+  /**
+   * Custom progress markers (fractions in 0..1) at which to emit checkpoints
+   * (#687) — e.g. a set clustered just before/after an early cliff. Defaults to
+   * `DRY_RUN_PROGRESS_MARKERS` when omitted. Markers are deduplicated and
+   * ordered ascending; any non-finite or out-of-range value fails the run.
+   */
+  progressMarkers?: readonly number[];
 }
 
 export interface StreamDryRunResult {
@@ -65,8 +79,9 @@ const FAIL: Omit<StreamDryRunResult, "error"> = {
  * Simulate a stream over its lifetime without submitting a transaction.
  *
  * Samples the vesting curve (via calculateVestingSchedule, so cliff
- * semantics are identical to on-chain behaviour) at even progress
- * markers, applying the protocol fee to each checkpoint's vested amount.
+ * semantics are identical to on-chain behaviour) at the caller's progress
+ * markers (or the default set), applying the protocol fee to each
+ * checkpoint's vested amount.
  */
 export function simulateStreamDryRun(input: StreamDryRunInput): StreamDryRunResult {
   const {
@@ -75,6 +90,7 @@ export function simulateStreamDryRun(input: StreamDryRunInput): StreamDryRunResu
     cliffSeconds = 0,
     feeBasisPoints = 0,
     startTime = Math.floor(Date.now() / 1000),
+    progressMarkers,
   } = input;
 
   if (!Number.isFinite(amountStroops) || amountStroops <= 0) {
@@ -84,17 +100,34 @@ export function simulateStreamDryRun(input: StreamDryRunInput): StreamDryRunResu
     return { ...FAIL, error: "Duration must be greater than 0." };
   }
 
+  let markers: readonly number[] = DRY_RUN_PROGRESS_MARKERS;
+  if (progressMarkers !== undefined) {
+    if (progressMarkers.length === 0) {
+      return { ...FAIL, error: "Progress markers must not be empty." };
+    }
+    if (progressMarkers.some((m) => !Number.isFinite(m) || m < 0 || m > 1)) {
+      return { ...FAIL, error: "Progress markers must be numbers between 0 and 1." };
+    }
+    markers = [...new Set(progressMarkers)].sort((a, b) => a - b);
+  }
+
   const endTime = startTime + durationSeconds;
   const cliffTime = cliffSeconds > 0 ? startTime + cliffSeconds : 0;
 
-  // Densely sample the vesting curve (every 1% of duration) so that each
-  // progress marker lands on an exact sample.
-  const { points } = calculateVestingSchedule(amountStroops, startTime, endTime, cliffTime, 101);
+  // Densely sample the vesting curve (every 0.1% of duration) so that each
+  // progress marker — default or custom — lands on a nearby sample.
+  const { points } = calculateVestingSchedule(
+    amountStroops,
+    startTime,
+    endTime,
+    cliffTime,
+    DRY_RUN_SAMPLE_COUNT,
+  );
   if (points.length === 0) {
     return { ...FAIL, error: "Unable to simulate the requested stream." };
   }
 
-  const checkpoints: DryRunCheckpoint[] = DRY_RUN_PROGRESS_MARKERS.map((progress) => {
+  const checkpoints: DryRunCheckpoint[] = markers.map((progress) => {
     const idx = Math.min(points.length - 1, Math.round(progress * (points.length - 1)));
     const point = points[idx];
     // The fee is charged exactly once, on the cumulative amount claimable at

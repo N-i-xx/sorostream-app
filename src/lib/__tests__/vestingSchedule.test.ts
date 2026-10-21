@@ -78,3 +78,74 @@ describe("calculateVestingSchedule", () => {
     }
   });
 });
+
+describe("calculateVestingSchedule — denser sampling around the cliff (#686)", () => {
+  const CLIFF = START + 250; // 25% into the 1 000-second window
+
+  const countBetween = (points: { time: number }[], from: number, to: number) =>
+    points.filter((p) => p.time >= from && p.time <= to).length;
+
+  it("uniform sampling is unchanged when no options are passed", () => {
+    const plain = calculateVestingSchedule(TOTAL, START, END, CLIFF, 50);
+    const explicit = calculateVestingSchedule(TOTAL, START, END, CLIFF, 50, {});
+
+    expect(plain.points).toHaveLength(50);
+    expect(explicit.points).toEqual(plain.points);
+  });
+
+  it("adds samples only inside the configured cliff window", () => {
+    const windowSeconds = 100;
+    const opts = { cliffWindowSeconds: windowSeconds, cliffSampleCount: 20 };
+
+    const uniform = calculateVestingSchedule(TOTAL, START, END, CLIFF, 50);
+    const dense = calculateVestingSchedule(TOTAL, START, END, CLIFF, 50, opts);
+
+    expect(dense.points.length).toBeGreaterThan(uniform.points.length);
+    expect(countBetween(dense.points, CLIFF - windowSeconds, CLIFF + windowSeconds)).toBeGreaterThan(
+      countBetween(uniform.points, CLIFF - windowSeconds, CLIFF + windowSeconds),
+    );
+    // Everything outside the window is exactly the uniform set.
+    expect(countBetween(dense.points, START, CLIFF - windowSeconds)).toBe(
+      countBetween(uniform.points, START, CLIFF - windowSeconds),
+    );
+    expect(countBetween(dense.points, CLIFF + windowSeconds, END)).toBe(
+      countBetween(uniform.points, CLIFF + windowSeconds, END),
+    );
+  });
+
+  it("always samples the cliff boundary itself", () => {
+    const { points } = calculateVestingSchedule(TOTAL, START, END, CLIFF, 50, {
+      cliffWindowSeconds: 60,
+      cliffSampleCount: 8,
+    });
+
+    const atCliff = points.find((p) => p.time === CLIFF);
+    expect(atCliff).toBeDefined();
+    expect(atCliff!.claimable).toBeGreaterThan(0);
+    expect(points.filter((p) => p.time < CLIFF).every((p) => p.claimable === 0)).toBe(true);
+  });
+
+  it("keeps points ordered, in range and monotonically vesting", () => {
+    const { points } = calculateVestingSchedule(TOTAL, START, END, CLIFF, 50, {
+      cliffWindowSeconds: 100,
+      cliffSampleCount: 20,
+    });
+
+    expect(points[0].time).toBe(START);
+    expect(points[points.length - 1].time).toBe(END);
+
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i].time).toBeGreaterThanOrEqual(points[i - 1].time);
+      expect(points[i].claimable).toBeGreaterThanOrEqual(points[i - 1].claimable);
+    }
+  });
+
+  it("ignores the window option when there is no cliff", () => {
+    const { points } = calculateVestingSchedule(TOTAL, START, END, 0, 50, {
+      cliffWindowSeconds: 100,
+      cliffSampleCount: 20,
+    });
+
+    expect(points).toHaveLength(50);
+  });
+});
