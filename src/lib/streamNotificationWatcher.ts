@@ -1,11 +1,11 @@
 /**
- * Stream Notification Watcher (#76)
+ * Stream Notification Watcher (#76, #689)
  *
  * Monitors streams in real-time and dispatches browser push notifications
  * via the service worker when:
- *   1. A stream is 24 hours before expiry.
- *   2. A stream is 1 hour before expiry.
- *   3. Claimable balance crosses a user-configured threshold.
+ *   1. A stream is a configured number of hours before expiry — 24h and 1h by
+ *      default, plus any extra lead times the user configures (#689).
+ *   2. Claimable balance crosses a user-configured threshold.
  *
  * Honors per-stream and global notification preferences.
  * Notifications are dispatched via the Service Worker so they display
@@ -16,6 +16,7 @@ import {
   getNotificationPrefs,
   getStreamNotificationPref,
   isPushSupported,
+  resolveExpiryThresholdHours,
 } from "./notificationPrefs";
 import { dispatchPushNotification } from "./pushSubscription";
 import {
@@ -24,6 +25,57 @@ import {
   formatStellarAmount,
   type StreamData,
 } from "./sorostream";
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Format a lead time in hours as human-readable text: `24` → "24 hours",
+ * `48` → "2 days", `168` → "7 days", `0.5` → "0.5 hours".
+ *
+ * Whole days are only used above 24h so the default "24 hours" wording of the
+ * pre-#689 24-hour alert is preserved.
+ */
+export function formatExpiryLeadTime(hours: number): string {
+  if (hours > 24 && hours % 24 === 0) {
+    const days = hours / 24;
+    return `${days} ${days === 1 ? "day" : "days"}`;
+  }
+  return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+}
+
+/**
+ * Stable short key for a threshold, used in the localStorage dedupe key and
+ * the notification tag. `24` → "24h" — matching the keys written before
+ * thresholds were configurable, so already-notified users don't get repeats.
+ */
+export function expiryThresholdKey(hours: number): string {
+  return `${hours}h`;
+}
+
+/**
+ * Pick the narrowest configured threshold that still covers the time left.
+ *
+ * With the defaults `[24, 1]`, 20 hours remaining yields `24` while 30 minutes
+ * remaining yields `1` — so a stream never fires both alerts in one pass.
+ * Returns `undefined` when no threshold applies yet.
+ *
+ * @param thresholdHours  Threshold list in hours; order does not matter (see
+ *                        `resolveExpiryThresholdHours`).
+ * @param hoursRemaining  Hours until the stream expires; may be fractional.
+ */
+export function selectDueExpiryThreshold(
+  thresholdHours: readonly number[],
+  hoursRemaining: number,
+): number | undefined {
+  if (!Number.isFinite(hoursRemaining) || hoursRemaining <= 0) return undefined;
+  let due: number | undefined;
+  for (const hours of thresholdHours) {
+    if (hoursRemaining <= hours && (due === undefined || hours < due)) {
+      due = hours;
+    }
+  }
+  return due;
+}
 
 /**
  * Evaluates all user streams against expiry and claimable threshold criteria,
@@ -47,43 +99,22 @@ export async function checkStreamNotifications(providedStreams?: StreamData[]): 
     const streamPref = getStreamNotificationPref(stream.id);
     if (!streamPref.enabled) continue;
 
-    // 1. Expiry alerts (24h and 1h before stream expiry)
+    // 1. Expiry alerts at each configured lead time (#689)
     const endMs = new Date(stream.endTime).getTime();
     if (!isNaN(endMs)) {
-      const diffMs = endMs - now;
-      const diffHours = diffMs / (1000 * 60 * 60);
+      const hoursRemaining = (endMs - now) / HOUR_MS;
+      const thresholds = resolveExpiryThresholdHours(prefs, streamPref);
+      const dueHours = selectDueExpiryThreshold(thresholds, hoursRemaining);
 
-      // 24 hours before expiry
-      const allow24h =
-        (streamPref.notifyExpiry24h ?? true) &&
-        (prefs.events.expiring24h ?? prefs.events.expiringSoon ?? true);
-
-      if (allow24h && diffHours > 1 && diffHours <= 24) {
-        const key24 = `sorostream_notified_${stream.id}_24h_${stream.endTime}`;
-        if (!localStorage.getItem(key24)) {
-          localStorage.setItem(key24, "true");
+      if (dueHours !== undefined) {
+        const thresholdKey = expiryThresholdKey(dueHours);
+        const notifiedKey = `sorostream_notified_${stream.id}_${thresholdKey}_${stream.endTime}`;
+        if (!localStorage.getItem(notifiedKey)) {
+          localStorage.setItem(notifiedKey, "true");
           void dispatchPushNotification({
             title: `Stream #${stream.id} Expiring Soon`,
-            body: `Stream #${stream.id} (${stream.token}) is scheduled to expire in 24 hours.`,
-            tag: `stream-expiry-24h-${stream.id}`,
-            url: `/stream/${stream.id}`,
-          });
-        }
-      }
-
-      // 1 hour before expiry
-      const allow1h =
-        (streamPref.notifyExpiry1h ?? true) &&
-        (prefs.events.expiring1h ?? true);
-
-      if (allow1h && diffHours > 0 && diffHours <= 1) {
-        const key1 = `sorostream_notified_${stream.id}_1h_${stream.endTime}`;
-        if (!localStorage.getItem(key1)) {
-          localStorage.setItem(key1, "true");
-          void dispatchPushNotification({
-            title: `Stream #${stream.id} Expiring Soon`,
-            body: `Stream #${stream.id} (${stream.token}) is scheduled to expire in 1 hour.`,
-            tag: `stream-expiry-1h-${stream.id}`,
+            body: `Stream #${stream.id} (${stream.token}) is scheduled to expire in ${formatExpiryLeadTime(dueHours)}.`,
+            tag: `stream-expiry-${thresholdKey}-${stream.id}`,
             url: `/stream/${stream.id}`,
           });
         }
