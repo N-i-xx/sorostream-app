@@ -82,26 +82,20 @@ async function fetchStellarExpert(): Promise<number> {
 /**
  * Returns the current XLM/USD price, using a 5-minute cache.
  * Returns `null` if both sources are unavailable.
+ *
+ * @param options.force Bypass the cache and fetch a fresh price (used by the
+ *   shared context's manual refresh). Falls back to the stale cache value if
+ *   both feeds are unreachable.
  */
-export async function getXlmUsdPrice(): Promise<number | null> {
-  return (await getXlmUsdPriceWithMeta()).price;
-}
-
-/**
- * Rate-limit-aware fetch (issue #726). Behaves exactly like `getXlmUsdPrice`
- * for the price value itself — fresh cache first, then CoinGecko, then
- * Stellar Expert, then the stale cache — and additionally reports whether the
- * feeds are currently refusing us (HTTP 429), so the shared provider can back
- * off instead of retrying on its normal one-minute cadence.
- */
-export async function getXlmUsdPriceWithMeta(): Promise<XlmPriceMeta> {
+export async function getXlmUsdPrice(
+  options: { force?: boolean } = {},
+): Promise<number | null> {
   const now = Date.now();
   const rateLimitedRecently = now < rateLimitedUntil;
 
-  // Return cached value if still fresh — but a cache entry fetched before a
-  // 429 no longer counts as fresh once the provider is being rate-limited.
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return { price: cache.price, rateLimited: rateLimitedRecently };
+  // Return cached value if still fresh, unless a fresh fetch was requested.
+  if (!options.force && cache && now - cache.fetchedAt < CACHE_TTL_MS) {
+    return cache.price;
   }
 
   // Try primary source, then fallback.

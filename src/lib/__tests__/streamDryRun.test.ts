@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simulateStreamDryRun } from "../streamDryRun";
+import { DRY_RUN_PROGRESS_MARKERS, simulateStreamDryRun } from "../streamDryRun";
 
 const STROOPS = 10_000_000;
 const START = 1_700_000_000; // fixed epoch seconds for determinism
@@ -155,5 +155,89 @@ describe("simulateStreamDryRun (#430)", () => {
       expect(withCliff.checkpoints[i].feeStroops).toBe(noCliff.checkpoints[i].feeStroops);
       expect(withCliff.checkpoints[i].netStroops).toBe(noCliff.checkpoints[i].netStroops);
     }
+  });
+});
+
+describe("simulateStreamDryRun — custom progress markers (#687)", () => {
+  it("falls back to DRY_RUN_PROGRESS_MARKERS when none are supplied", () => {
+    const result = simulateStreamDryRun({
+      amountStroops: 100 * STROOPS,
+      durationSeconds: 1000,
+      startTime: START,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.checkpoints.map((c) => c.progress)).toEqual([...DRY_RUN_PROGRESS_MARKERS]);
+  });
+
+  it("samples a custom marker set including a cliff-adjacent fraction", () => {
+    const result = simulateStreamDryRun({
+      amountStroops: 1000 * STROOPS,
+      durationSeconds: 1000,
+      cliffSeconds: 120, // cliff at 12% — no default marker lands near it
+      feeBasisPoints: 50,
+      startTime: START,
+      progressMarkers: [0, 0.11, 0.12, 0.5, 1],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.checkpoints.map((c) => c.progress)).toEqual([0, 0.11, 0.12, 0.5, 1]);
+
+    const [start, justBeforeCliff, atCliff, half, end] = result.checkpoints;
+
+    expect(start.time).toBe(START);
+    expect(start.vestedStroops).toBe(0);
+
+    // 11% is still pre-cliff: nothing unlocked.
+    expect(justBeforeCliff.time).toBe(START + 110);
+    expect(justBeforeCliff.vestedStroops).toBe(0);
+    expect(justBeforeCliff.feeStroops).toBe(0);
+
+    // The marker on the cliff sees the whole accrued amount, fee charged once.
+    expect(atCliff.time).toBe(START + 120);
+    expect(atCliff.vestedStroops).toBe(120 * STROOPS);
+    expect(atCliff.feeStroops).toBe(Math.floor((120 * STROOPS * 50) / 10_000));
+    expect(atCliff.netStroops).toBe(atCliff.vestedStroops - atCliff.feeStroops);
+
+    expect(half.vestedStroops).toBe(500 * STROOPS);
+    expect(end.time).toBe(START + 1000);
+    expect(end.vestedStroops).toBe(1000 * STROOPS);
+  });
+
+  it("deduplicates and orders the supplied markers", () => {
+    const result = simulateStreamDryRun({
+      amountStroops: 100 * STROOPS,
+      durationSeconds: 1000,
+      startTime: START,
+      progressMarkers: [1, 0.5, 0.5, 0],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.checkpoints.map((c) => c.progress)).toEqual([0, 0.5, 1]);
+  });
+
+  it("rejects markers outside 0..1", () => {
+    const result = simulateStreamDryRun({
+      amountStroops: 100 * STROOPS,
+      durationSeconds: 1000,
+      startTime: START,
+      progressMarkers: [0, 1.5],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/progress markers/i);
+    expect(result.checkpoints).toHaveLength(0);
+  });
+
+  it("rejects an empty marker list", () => {
+    const result = simulateStreamDryRun({
+      amountStroops: 100 * STROOPS,
+      durationSeconds: 1000,
+      startTime: START,
+      progressMarkers: [],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/progress markers/i);
   });
 });

@@ -22,7 +22,7 @@ describe('useFocusTrap', () => {
       bubbles: true,
       cancelable: true,
     });
-    document.dispatchEvent(event);
+    container.dispatchEvent(event);
     return event;
   };
 
@@ -31,7 +31,7 @@ describe('useFocusTrap', () => {
     button.textContent = 'Only';
     container.appendChild(button);
 
-    renderHook(() => useFocusTrap(ref));
+    renderHook(() => useFocusTrap(ref, true));
 
     button.focus();
     expect(document.activeElement).toBe(button);
@@ -46,7 +46,7 @@ describe('useFocusTrap', () => {
     button.textContent = 'Only';
     container.appendChild(button);
 
-    renderHook(() => useFocusTrap(ref));
+    renderHook(() => useFocusTrap(ref, true));
 
     button.focus();
     expect(document.activeElement).toBe(button);

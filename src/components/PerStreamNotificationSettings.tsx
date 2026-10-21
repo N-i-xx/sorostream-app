@@ -16,6 +16,7 @@ import {
   setStreamNotificationPref,
   requestPushPermission,
   isPushSupported,
+  parseExpiryThresholdHours,
   type NotificationPrefs,
   type StreamNotificationPref,
 } from "@/src/lib/notificationPrefs";
@@ -281,6 +282,38 @@ export default function PerStreamNotificationSettings() {
                         disabled={isGlobalDisabled || !currentPref.enabled}
                         label={`Notify 1h before expiry for stream #${stream.id}`}
                       />
+                    </div>
+
+                    {/* Custom expiry lead times (#689) */}
+                    <div className="pt-1 space-y-1.5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <label
+                          htmlFor={`expiry-thresholds-input-${stream.id}`}
+                          className="text-xs text-gray-300"
+                        >
+                          Extra alerts, hours before expiry:
+                        </label>
+                        <input
+                          id={`expiry-thresholds-input-${stream.id}`}
+                          type="text"
+                          inputMode="decimal"
+                          defaultValue={(currentPref.expiryThresholdsHours ?? []).join(", ")}
+                          onBlur={(e) =>
+                            handleUpdateField(
+                              stream.id,
+                              "expiryThresholdsHours",
+                              parseExpiryThresholdHours(e.target.value),
+                            )
+                          }
+                          placeholder="e.g. 168"
+                          disabled={isGlobalDisabled || !currentPref.enabled}
+                          className="w-32 bg-gray-700 border border-gray-600 rounded px-2.5 py-1 text-white text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Added on top of the 24h and 1h alerts for this stream. Comma-separated; no extra
+                        alerts when empty.
+                      </p>
                     </div>
 
                     {/* Claimable balance threshold */}

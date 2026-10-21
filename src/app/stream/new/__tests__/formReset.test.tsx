@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import NewStreamPage from "@/src/app/stream/new/page";
-import { FORM_DRAFT_KEY, readDraft } from "@/src/lib/useFormPersist";
+import { FORM_DRAFT_KEY, readDraft, writeDraft } from "@/src/lib/useFormPersist";
 
 const push = vi.fn();
 const triggerStreamRefresh = vi.fn();
@@ -84,7 +84,7 @@ describe("Create stream happy path", () => {
     // awaits a real 5s undo window before submitting (see waitFor below).
     const recipient = "GB7B2XS7YYUWVLXUYG6EWBEYHV4WTUY5VWFDOXWOITVNHAJBMMRV7ZGO";
     const draft = { recipient, amount: "100", duration: 3600, selectedToken: "USDC", customTokenAddress: "", endDate: "", cliffDate: "" };
-    window.sessionStorage.setItem(FORM_DRAFT_KEY, JSON.stringify(draft));
+    writeDraft(draft);
 
     const view = render(<NewStreamPage />);
 

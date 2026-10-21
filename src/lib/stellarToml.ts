@@ -9,20 +9,73 @@
  *   address = "GA..."
  *   alias = "hotwallet-1"
  *
- * resolveTomlDisplayName(address) probes well-known domains and returns the
- * first alias found for the address (or null). Results are cached in
+ * resolveTomlDisplayName(address) probes well-known domains (plus any
+ * extra domains configured through NEXT_PUBLIC_TOML_EXTRA_DOMAINS) and returns
+ * the first alias found for the address (or null). Results are cached in
  * sessionStorage using the same convention as federation.ts.
  */
 
 const SESSION_PREFIX = "sorostream-toml-";
 const LOOKUP_TIMEOUT_MS = 3_000;
 
-/** Domains probed for a matching [[ACCOUNTS]] entry. */
-const PROBE_DOMAINS = [
+/**
+ * Domains probed by default for a matching [[ACCOUNTS]] entry.
+ * Extended at runtime by `NEXT_PUBLIC_TOML_EXTRA_DOMAINS` (#699) so a
+ * self-hosted/white-labeled deployment can add its own trusted domain without
+ * editing this file.
+ */
+export const DEFAULT_PROBE_DOMAINS = [
   "stellar.org",
   "lobstr.co",
   "stellarterm.com",
 ];
+
+/**
+ * Normalize a user-supplied domain to a bare hostname.
+ * Accepts `example.com`, `https://example.com`, `example.com/path`, and
+ * rejects anything that is not a plausible hostname (so a configured value
+ * can never alter the URL shape we fetch).
+ */
+function normalizeDomain(raw: string): string | null {
+  let domain = raw.trim().toLowerCase();
+  if (!domain) return null;
+
+  domain = domain.replace(/^[a-z][a-z0-9+.-]*:\/\//, ""); // strip scheme
+  domain = domain.split("/")[0]; // strip path
+  domain = domain.replace(/:\d+$/, ""); // strip port
+
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)
+    ? domain
+    : null;
+}
+
+/**
+ * Full probe sequence: the default well-known domains followed by any
+ * extra domains configured via `NEXT_PUBLIC_TOML_EXTRA_DOMAINS`, deduplicated
+ * and in first-seen order. With no env configured the result is exactly
+ * `DEFAULT_PROBE_DOMAINS`.
+ *
+ * The env var is read on every call so tests (and runtime revalidation) see
+ * the current value.
+ */
+export function getProbeDomains(
+  // Literal member access so Next.js inlines NEXT_PUBLIC_* at build time.
+  raw: string | undefined = process.env.NEXT_PUBLIC_TOML_EXTRA_DOMAINS,
+): string[] {
+  const extras = (raw ?? "")
+    .split(",")
+    .map(normalizeDomain)
+    .filter((domain): domain is string => domain !== null);
+
+  const seen = new Set<string>();
+  const domains: string[] = [];
+  for (const domain of [...DEFAULT_PROBE_DOMAINS, ...extras]) {
+    if (seen.has(domain)) continue;
+    seen.add(domain);
+    domains.push(domain);
+  }
+  return domains;
+}
 
 interface TomlAccount {
   address: string;
@@ -145,7 +198,7 @@ export async function resolveTomlDisplayName(
 
   try {
     const results = await Promise.allSettled(
-      PROBE_DOMAINS.map(async (domain) => {
+      getProbeDomains().map(async (domain) => {
         const res = await fetchWithTimeout(
           `https://${domain}/.well-known/stellar.toml`,
           LOOKUP_TIMEOUT_MS,

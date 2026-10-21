@@ -9,17 +9,17 @@
  * Solution: a single provider fetches the price once per minute and all consumers
  * read from the shared context value. Zero duplicate network calls.
  *
- * Issue #726: that single shared fetch itself can be rate-limited (HTTP 429).
- * The provider then backs off — the next attempt waits on a growing backoff
- * instead of the normal one-minute cadence — and exposes `rateLimited`/`stale`
- * so consumers can distinguish a "price could not be refreshed because the
- * price API is refusing us" display from a normally fresh one, while keeping
- * the last known price on screen.
+ * Consumers can also call `refresh()` (issue #700) to pull a fresh price ahead of
+ * the next scheduled tick, e.g. right before confirming a large transaction.
+ * Manual refreshes reuse the single in-flight request and leave the automatic
+ * interval untouched.
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -40,15 +40,11 @@ interface XlmPriceContextValue {
   price: number | null;
   /** True only during the very first fetch (no price yet). */
   loading: boolean;
-  /** True while the price APIs are refusing us (HTTP 429) or the last fetch
-   * was 429'd (issue #726). */
-  rateLimited: boolean;
-  /** True when `price` may be stale because the shared fetch was rate-limited
-   * and could not refresh — distinct from a normally fresh price (issue #726). */
-  stale: boolean;
-  /** When `price` was last confirmed fresh (ms epoch), or null when no price
-   * has ever been fetched successfully. */
-  lastUpdatedAt: number | null;
+  /**
+   * Fetch the latest XLM/USD price immediately, ahead of the automatic tick.
+   * Resolves once the shared value has been updated.
+   */
+  refresh: () => Promise<void>;
 }
 
 const XlmPriceContext = createContext<XlmPriceContextValue | undefined>(undefined);
@@ -60,49 +56,47 @@ export function XlmPriceProvider({ children }: { children: ReactNode }) {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   // Track whether the component is still mounted to avoid state updates after unmount.
   const cancelledRef = useRef(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Consecutive rate-limit events (1, 2, 4, ... × backoff base) — reset on success.
-  const backoffMultipleRef = useRef(1);
+  // Deduplicate concurrent fetches (manual refresh landing on the same tick as
+  // the automatic refresh should not fire two requests).
+  const inFlightRef = useRef<Promise<number | null> | null>(null);
 
-  useEffect(() => {
-    cancelledRef.current = false;
-
-    function scheduleNext(delayMs: number): void {
-      timerRef.current = setTimeout(() => {
-        void attempt();
-      }, delayMs);
+  const fetchPrice = useCallback(async (force: boolean): Promise<void> => {
+    if (inFlightRef.current) {
+      await inFlightRef.current;
+      return;
     }
 
-    async function attempt(): Promise<void> {
-      const meta = await getXlmUsdPriceWithMeta();
-      if (cancelledRef.current) return;
+    const request = getXlmUsdPrice({ force });
+    inFlightRef.current = request;
 
-      if (meta.rateLimited) {
-        // Backoff before the next attempt instead of retrying at the normal
-        // one-minute cadence immediately (issue #726). The last known price
-        // stays displayed and is flagged stale by the derived `stale` flag.
-        const delay = RATE_LIMIT_BACKOFF_BASE_MS * backoffMultipleRef.current;
-        backoffMultipleRef.current = Math.min(
-          backoffMultipleRef.current * 2,
-          RATE_LIMIT_BACKOFF_MAX_MULTIPLE,
-        );
-        setRateLimited(true);
+    try {
+      const p = await request;
+      if (!cancelledRef.current) {
+        setPrice(p);
         setLoading(false);
         scheduleNext(delay);
         return;
       }
-
-      backoffMultipleRef.current = 1;
-      setRateLimited(false);
-      if (meta.price !== null) {
-        setPrice(meta.price);
-        setLastUpdatedAt(Date.now());
-      }
-      setLoading(false);
-      scheduleNext(SHARED_REFRESH_INTERVAL_MS);
+    } finally {
+      if (inFlightRef.current === request) inFlightRef.current = null;
     }
+  }, []);
 
-    void attempt();
+  const refresh = useCallback(async (): Promise<void> => {
+    // Force a network fetch so a manual refresh never returns the stale cache.
+    await fetchPrice(true);
+  }, [fetchPrice]);
+
+  useEffect(() => {
+    cancelledRef.current = false;
+
+    void fetchPrice(false);
+
+    // The interval is created once per provider. `refresh` and `fetchPrice` are
+    // stable, so a manual refresh never resets or duplicates this timer.
+    const interval = setInterval(() => {
+      void fetchPrice(false);
+    }, SHARED_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelledRef.current = true;
@@ -111,22 +105,15 @@ export function XlmPriceProvider({ children }: { children: ReactNode }) {
         timerRef.current = null;
       }
     };
-  }, []);
+  }, [fetchPrice]);
+
+  const value = useMemo(
+    () => ({ price, loading, refresh }),
+    [price, loading, refresh],
+  );
 
   return (
-    <XlmPriceContext.Provider
-      value={{
-        price,
-        loading,
-        rateLimited,
-        // A rate-limited fetch cannot refresh the price: whatever is displayed
-        // now is stale until a later attempt succeeds (issue #726).
-        stale: rateLimited && price !== null,
-        lastUpdatedAt,
-      }}
-    >
-      {children}
-    </XlmPriceContext.Provider>
+    <XlmPriceContext.Provider value={value}>{children}</XlmPriceContext.Provider>
   );
 }
 

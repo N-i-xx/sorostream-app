@@ -18,6 +18,7 @@ import {
   isPushSupported,
   isValidEmail,
   isValidWebhookUrl,
+  parseExpiryThresholdHours,
   type NotificationPrefs,
   type NotificationEventPrefs,
 } from "@/src/lib/notificationPrefs";
@@ -31,13 +32,15 @@ import {
 import { dispatchWebhook } from "@/src/lib/webhooks";
 import { useToast } from "@/src/lib/toast";
 import PerStreamNotificationSettings from "@/src/components/PerStreamNotificationSettings";
+import PushDeviceStatusBanner from "@/src/components/PushDeviceStatusBanner";
 import { checkStreamNotifications } from "@/src/lib/streamNotificationWatcher";
 
 // claimableThreshold (the numeric threshold value, not the "...Enabled" flag
-// that toggles it) is the one non-boolean field on NotificationEventPrefs,
-// so it's excluded here — every entry below renders as a boolean Toggle.
+// that toggles it) and expiryThresholdsHours (the custom expiry lead-time
+// list) are the non-boolean fields on NotificationEventPrefs, so they are
+// excluded here — every entry below renders as a boolean Toggle.
 const EVENT_LABELS: {
-  key: keyof Omit<NotificationEventPrefs, "claimableThreshold">;
+  key: keyof Omit<NotificationEventPrefs, "claimableThreshold" | "expiryThresholdsHours">;
   label: string;
   description: string;
 }[] = [
@@ -119,12 +122,15 @@ export default function NotificationSettingsPage() {
   const [webhookInput, setWebhookInput] = useState("");
   const [webhookError, setWebhookError] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
+  // Free-text list of extra expiry lead times, in hours (#689).
+  const [expiryThresholdInput, setExpiryThresholdInput] = useState("");
 
   useEffect(() => {
     const loaded = getNotificationPrefs();
     setPrefs(loaded);
     setEmailInput(loaded.email);
     setWebhookInput(loaded.webhookUrl);
+    setExpiryThresholdInput((loaded.events.expiryThresholdsHours ?? []).join(", "));
   }, []);
 
   function persist(next: NotificationPrefs) {
@@ -219,6 +225,19 @@ export default function NotificationSettingsPage() {
     handleSaveWebhook(true);
   }
 
+  function handleSaveExpiryThresholds() {
+    if (!prefs) return;
+    const hours = parseExpiryThresholdHours(expiryThresholdInput);
+    setExpiryThresholdInput(hours.join(", "));
+    persist({ ...prefs, events: { ...prefs.events, expiryThresholdsHours: hours } });
+    addToast(
+      hours.length > 0
+        ? `Extra expiry alerts saved: ${hours.join("h, ")}h before expiry.`
+        : "Extra expiry alerts cleared. The 24h and 1h alerts still apply.",
+      "info",
+    );
+  }
+
   async function handleSendTestWebhook() {
     if (!prefs) return;
     const trimmed = webhookInput.trim();
@@ -298,6 +317,9 @@ export default function NotificationSettingsPage() {
             <p className="text-yellow-400 text-xs">Push notifications aren&apos;t supported in this browser.</p>
           )}
         </div>
+
+        {/* Per-device push setup check (#690) */}
+        <PushDeviceStatusBanner />
 
         {/* Email */}
         <div className="bg-gray-800 rounded-xl p-6 space-y-4 mb-6">
@@ -447,6 +469,54 @@ export default function NotificationSettingsPage() {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Custom expiry lead times (#689) */}
+        <div className="bg-gray-800 rounded-xl p-6 space-y-3 mb-8">
+          <div>
+            <h2 className="text-lg font-semibold">Custom Expiry Alerts</h2>
+            <p className="text-gray-400 text-sm mt-1">
+              Add your own heads-up before a stream expires, on top of the 24h and 1h alerts above.
+            </p>
+          </div>
+          <div>
+            <label
+              htmlFor="custom-expiry-thresholds"
+              className="text-gray-200 text-sm font-medium block mb-1"
+            >
+              Hours before expiry
+            </label>
+            <div className="flex gap-3">
+              <input
+                id="custom-expiry-thresholds"
+                type="text"
+                inputMode="decimal"
+                value={expiryThresholdInput}
+                onChange={(e) => setExpiryThresholdInput(e.target.value)}
+                placeholder="e.g. 168, 48"
+                disabled={subControlsDisabled}
+                aria-describedby="custom-expiry-thresholds-help"
+                className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
+              />
+              <button
+                type="button"
+                onClick={handleSaveExpiryThresholds}
+                disabled={subControlsDisabled}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
+              >
+                Save
+              </button>
+            </div>
+            <p id="custom-expiry-thresholds-help" className="text-gray-500 text-xs mt-1">
+              Comma-separated hours, e.g. 168 for one week. Leave empty to use only the 24h and 1h alerts.
+            </p>
+            {(prefs.events.expiryThresholdsHours ?? []).length > 0 && (
+              <p className="text-green-400 text-xs mt-1">
+                Extra alerts active at{" "}
+                {(prefs.events.expiryThresholdsHours ?? []).join("h, ")}h before expiry.
+              </p>
+            )}
           </div>
         </div>
 
