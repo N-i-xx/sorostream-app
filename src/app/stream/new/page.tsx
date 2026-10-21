@@ -304,6 +304,9 @@ function NewStreamWizard() {
   const [verificationAcknowledged, setVerificationAcknowledged] = useState(false);
   const [verificationLoading, setVerificationLoading] = useState(false);
   const verificationDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cancellation handle for the in-flight verification (#724): aborted when the
+  // recipient changes or the component unmounts.
+  const verificationAbortRef = useRef<AbortController | null>(null);
 
   // Sender's recipient whitelist / address book (#432)
   const senderKey = address ?? undefined;
@@ -347,6 +350,13 @@ function NewStreamWizard() {
     }
   }
 
+  // Track the latest recipient so a verification for the previous address can
+  // be recognised as stale when it resolves late (issue #723).
+  const recipientRef = useRef(recipient);
+  useEffect(() => {
+    recipientRef.current = recipient;
+  }, [recipient]);
+
   // Trigger address verification when recipient changes
   useEffect(() => {
     if (!recipient) {
@@ -359,16 +369,32 @@ function NewStreamWizard() {
       clearTimeout(verificationDebounceRef.current);
     }
 
+    // Abort any in-flight verification for the previous recipient, and let the
+    // effect cleanup abort this one on unmount or recipient change (#724).
+    const controller = new AbortController();
+    verificationAbortRef.current = controller;
+
     setVerificationLoading(true);
     verificationDebounceRef.current = setTimeout(async () => {
       try {
-        const result = await verifyAddress(recipient);
+        const result = await verifyAddress(recipient, {
+          signal: controller.signal,
+          isCurrentTarget: () => recipientRef.current === recipient,
+        });
+        // Discard a late result for an address the user already left (#723):
+        // the newer verification's result must win, never this one.
+        if (recipientRef.current !== recipient || controller.signal.aborted) return;
         setAddressVerification(result);
       } catch {
-        // Silently fail verification (don't block form)
+        // Silently fail verification (don't block form) — but a stale/cancelled
+        // run must not overwrite the newer target's state either.
+        if (recipientRef.current !== recipient || controller.signal.aborted) return;
         setAddressVerification(null);
       } finally {
-        setVerificationLoading(false);
+        // A stale run must not clear the newer run's loading state.
+        if (recipientRef.current === recipient && !controller.signal.aborted) {
+          setVerificationLoading(false);
+        }
       }
     }, 800); // Debounce federation resolution
 
@@ -376,6 +402,10 @@ function NewStreamWizard() {
       if (verificationDebounceRef.current) {
         clearTimeout(verificationDebounceRef.current);
       }
+      // Component unmounted (or recipient changed): cancel in-flight horizon
+      // and federation lookups so nothing keeps running or caches afterwards
+      // (issue #724).
+      controller.abort();
     };
   }, [recipient]);
 

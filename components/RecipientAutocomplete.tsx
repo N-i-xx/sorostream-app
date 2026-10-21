@@ -85,7 +85,9 @@ export default function RecipientAutocomplete({
 
       void (async () => {
         try {
-          const resolved = await resolveFederationName(value);
+          const resolved = await resolveFederationName(value, {
+            signal: controller.signal,
+          });
 
           // If the request was aborted while we were awaiting, discard the result
           if (controller.signal.aborted) return;

@@ -37,15 +37,26 @@ export default function FederationName({
   useEffect(() => {
     if (!address) return;
     let cancelled = false;
+    // Cancel the in-flight lookup when this component unmounts (issue #724):
+    // otherwise the 3-second-per-domain probe keeps running and can still
+    // write to sessionStorage after the consumer is gone.
+    const controller = new AbortController();
 
-    resolveFederationName(address).then((name) => {
-      if (!cancelled) setFedName(name);
+    resolveFederationName(address, { signal: controller.signal }).then(
+      (name) => {
+        if (!cancelled) setFedName(name);
+      },
+    ).catch(() => {
+      // Lookup cancelled (or failed) — nothing to display.
     });
     resolveTomlDisplayName(address).then((name) => {
       if (!cancelled) setTomlName(name);
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [address]);
 
   const displayAddress = truncate ? truncateAddress(address) : address;

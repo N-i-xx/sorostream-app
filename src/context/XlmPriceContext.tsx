@@ -24,10 +24,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getXlmUsdPrice } from "@/src/lib/xlmPrice";
+import { getXlmUsdPriceWithMeta } from "@/src/lib/xlmPrice";
 
-/** How often the shared price is refreshed (1 minute). */
+/** How often the shared price is refreshed when the API is healthy (1 minute). */
 const SHARED_REFRESH_INTERVAL_MS = 60 * 1_000;
+
+/** Backoff after a rate-limited shared fetch (issue #726): 5 minutes after the
+ * first 429, doubling on consecutive ones, capped at 30 minutes. Bounded so a
+ * permanently rate-limited deployment still resumes fetching eventually. */
+const RATE_LIMIT_BACKOFF_BASE_MS = 5 * 60 * 1_000;
+const RATE_LIMIT_BACKOFF_MAX_MULTIPLE = 6;
 
 interface XlmPriceContextValue {
   /** Latest XLM/USD price, or null when unavailable. */
@@ -46,6 +52,8 @@ const XlmPriceContext = createContext<XlmPriceContextValue | undefined>(undefine
 export function XlmPriceProvider({ children }: { children: ReactNode }) {
   const [price, setPrice] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   // Track whether the component is still mounted to avoid state updates after unmount.
   const cancelledRef = useRef(false);
   // Deduplicate concurrent fetches (manual refresh landing on the same tick as
@@ -66,6 +74,8 @@ export function XlmPriceProvider({ children }: { children: ReactNode }) {
       if (!cancelledRef.current) {
         setPrice(p);
         setLoading(false);
+        scheduleNext(delay);
+        return;
       }
     } finally {
       if (inFlightRef.current === request) inFlightRef.current = null;
@@ -90,7 +100,10 @@ export function XlmPriceProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelledRef.current = true;
-      clearInterval(interval);
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, [fetchPrice]);
 
