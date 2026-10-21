@@ -2,8 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   getStreamHealth,
   getStreamHealthDetails,
+  resolveStreamHealth,
+  DEFAULT_HEALTH_RULES,
+  HEALTH_STATUS_PRIORITY,
   EXPIRING_SOON_THRESHOLD_MS,
+  type HealthStatusRule,
   type HealthStreamInput,
+  type StreamHealthStatus,
 } from "../streamHealth";
 
 // ---------------------------------------------------------------------------
@@ -268,5 +273,164 @@ describe("getStreamHealthDetails — unclaimed balance on Expired streams", () =
       expect(details.status).toBe(getStreamHealth(stream, NOW));
       expect(details.hasUnclaimedBalance).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Extensible priority chain — injected application-specific statuses (#688)
+// ---------------------------------------------------------------------------
+
+/** A stream shape carrying a field this module knows nothing about. */
+type AppStream = HealthStreamInput & { disputed?: boolean; underReview?: boolean };
+
+type AppStatus = "Disputed" | "Under Review";
+
+/** Sits between Paused (400) and Expired (300) — above every time-based state. */
+const DISPUTED_RULE: HealthStatusRule<AppStatus> = {
+  status: "Disputed",
+  priority: HEALTH_STATUS_PRIORITY.Paused - 50, // 350
+  matches: ({ stream }) => (stream as AppStream).disputed === true,
+};
+
+/** Sits between Expiring Soon (200) and Active (100). */
+const UNDER_REVIEW_RULE: HealthStatusRule<AppStatus> = {
+  status: "Under Review",
+  priority: HEALTH_STATUS_PRIORITY["Expiring Soon"] - 50, // 150
+  matches: ({ stream }) => (stream as AppStream).underReview === true,
+};
+
+function makeAppStream(overrides: Partial<AppStream> & { endOffsetMs?: number } = {}): AppStream {
+  const { endOffsetMs = EXPIRING_SOON_THRESHOLD_MS * 2, ...rest } = overrides;
+  return {
+    status: "Active",
+    endTime: new Date(NOW + endOffsetMs).toISOString(),
+    ...rest,
+  };
+}
+
+describe("resolveStreamHealth — injected status rules (#688)", () => {
+  it("resolves an injected status at its declared priority, above Expired", () => {
+    const stream = makeAppStream({ disputed: true, endOffsetMs: -1000 });
+
+    // Without the rule the stream is Expired…
+    expect(getStreamHealth(stream, NOW)).toBe("Expired");
+    // …with it, Disputed wins because 350 > 300 (Expired).
+    expect(resolveStreamHealth(stream, NOW, [DISPUTED_RULE])).toBe("Disputed");
+  });
+
+  it("still loses to higher-priority built-ins (Paused, Cancelled)", () => {
+    expect(
+      resolveStreamHealth(makeAppStream({ disputed: true, status: "Paused" }), NOW, [
+        DISPUTED_RULE,
+      ]),
+    ).toBe("Paused");
+
+    expect(
+      resolveStreamHealth(makeAppStream({ disputed: true, status: "Cancelled" }), NOW, [
+        DISPUTED_RULE,
+      ]),
+    ).toBe("Cancelled");
+  });
+
+  it("beats lower-priority built-ins (Expiring Soon, Active)", () => {
+    expect(
+      resolveStreamHealth(makeAppStream({ disputed: true, endOffsetMs: 3600_000 }), NOW, [
+        DISPUTED_RULE,
+      ]),
+    ).toBe("Disputed");
+
+    expect(
+      resolveStreamHealth(makeAppStream({ disputed: true }), NOW, [DISPUTED_RULE]),
+    ).toBe("Disputed");
+  });
+
+  it("orders multiple injected rules against each other by priority", () => {
+    const stream = makeAppStream({ disputed: true, underReview: true });
+    expect(resolveStreamHealth(stream, NOW, [UNDER_REVIEW_RULE, DISPUTED_RULE])).toBe(
+      "Disputed",
+    );
+
+    // Reverse registration order — priority still decides.
+    expect(resolveStreamHealth(stream, NOW, [DISPUTED_RULE, UNDER_REVIEW_RULE])).toBe(
+      "Disputed",
+    );
+  });
+
+  it("falls through to the built-in chain when an injected rule does not match", () => {
+    expect(resolveStreamHealth(makeAppStream(), NOW, [DISPUTED_RULE, UNDER_REVIEW_RULE])).toBe(
+      "Active",
+    );
+  });
+
+  it("leaves the default five-status behaviour untouched", () => {
+    const streams: HealthStreamInput[] = [
+      makeStream({ status: "Cancelled", endOffsetMs: 0 }),
+      makeStream({ status: "Paused", endOffsetMs: 0 }),
+      makeStream({ status: "Ended" }),
+      makeStream({ endOffsetMs: -1000 }),
+      makeStream({ endOffsetMs: 3600_000 }),
+      makeStream({ endOffsetMs: EXPIRING_SOON_THRESHOLD_MS * 3 }),
+      { status: "Active", endTime: "not-a-date" },
+    ];
+
+    for (const stream of streams) {
+      expect(resolveStreamHealth(stream, NOW)).toBe(getStreamHealth(stream, NOW));
+      expect(resolveStreamHealth(stream, NOW, [])).toBe(getStreamHealth(stream, NOW));
+    }
+  });
+
+  it("ships the documented default rule order", () => {
+    expect(DEFAULT_HEALTH_RULES.map((rule) => rule.status)).toEqual([
+      "Cancelled",
+      "Paused",
+      "Expired",
+      "Expiring Soon",
+      "Active",
+    ]);
+
+    const priorities = DEFAULT_HEALTH_RULES.map((rule) => rule.priority);
+    expect(priorities).toEqual([
+      HEALTH_STATUS_PRIORITY.Cancelled,
+      HEALTH_STATUS_PRIORITY.Paused,
+      HEALTH_STATUS_PRIORITY.Expired,
+      HEALTH_STATUS_PRIORITY["Expiring Soon"],
+      HEALTH_STATUS_PRIORITY.Active,
+    ]);
+    // Strictly descending: every built-in outranks the one below it.
+    for (let i = 1; i < priorities.length; i++) {
+      expect(priorities[i - 1]).toBeGreaterThan(priorities[i]);
+    }
+  });
+
+  it("passes injected rules through getStreamHealthDetails", () => {
+    const disputedExpired = getStreamHealthDetails(
+      makeAppStream({ disputed: true, endOffsetMs: -1000 }),
+      5_000_000,
+      NOW,
+      [DISPUTED_RULE],
+    );
+    expect(disputedExpired).toEqual({
+      status: "Disputed",
+      // Only a literal "Expired" status carries an unclaimed-balance badge.
+      hasUnclaimedBalance: false,
+    });
+
+    const plainExpired = getStreamHealthDetails(
+      makeAppStream({ endOffsetMs: -1000 }),
+      5_000_000,
+      NOW,
+      [DISPUTED_RULE],
+    );
+    expect(plainExpired).toEqual({ status: "Expired", hasUnclaimedBalance: true });
+  });
+
+  it("keeps the return type limited to the declared statuses", () => {
+    // Type-level assertions: the helper still narrows to the built-in union,
+    // while resolveStreamHealth widens by exactly the injected statuses.
+    const status: StreamHealthStatus = getStreamHealth(makeStream(), NOW);
+    const resolved: StreamHealthStatus | AppStatus = resolveStreamHealth(makeStream(), NOW, [
+      DISPUTED_RULE,
+    ]);
+    expect(["Active", status, resolved]).toContain("Active");
   });
 });
