@@ -8,11 +8,18 @@
  *
  * Solution: a single provider fetches the price once per minute and all consumers
  * read from the shared context value. Zero duplicate network calls.
+ *
+ * Consumers can also call `refresh()` (issue #700) to pull a fresh price ahead of
+ * the next scheduled tick, e.g. right before confirming a large transaction.
+ * Manual refreshes reuse the single in-flight request and leave the automatic
+ * interval untouched.
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -27,6 +34,11 @@ interface XlmPriceContextValue {
   price: number | null;
   /** True only during the very first fetch (no price yet). */
   loading: boolean;
+  /**
+   * Fetch the latest XLM/USD price immediately, ahead of the automatic tick.
+   * Resolves once the shared value has been updated.
+   */
+  refresh: () => Promise<void>;
 }
 
 const XlmPriceContext = createContext<XlmPriceContextValue | undefined>(undefined);
@@ -36,34 +48,59 @@ export function XlmPriceProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   // Track whether the component is still mounted to avoid state updates after unmount.
   const cancelledRef = useRef(false);
+  // Deduplicate concurrent fetches (manual refresh landing on the same tick as
+  // the automatic refresh should not fire two requests).
+  const inFlightRef = useRef<Promise<number | null> | null>(null);
 
-  useEffect(() => {
-    cancelledRef.current = false;
+  const fetchPrice = useCallback(async (force: boolean): Promise<void> => {
+    if (inFlightRef.current) {
+      await inFlightRef.current;
+      return;
+    }
 
-    async function refresh() {
-      const p = await getXlmUsdPrice();
+    const request = getXlmUsdPrice({ force });
+    inFlightRef.current = request;
+
+    try {
+      const p = await request;
       if (!cancelledRef.current) {
         setPrice(p);
         setLoading(false);
       }
+    } finally {
+      if (inFlightRef.current === request) inFlightRef.current = null;
     }
+  }, []);
 
-    void refresh();
+  const refresh = useCallback(async (): Promise<void> => {
+    // Force a network fetch so a manual refresh never returns the stale cache.
+    await fetchPrice(true);
+  }, [fetchPrice]);
 
+  useEffect(() => {
+    cancelledRef.current = false;
+
+    void fetchPrice(false);
+
+    // The interval is created once per provider. `refresh` and `fetchPrice` are
+    // stable, so a manual refresh never resets or duplicates this timer.
     const interval = setInterval(() => {
-      void refresh();
+      void fetchPrice(false);
     }, SHARED_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelledRef.current = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [fetchPrice]);
+
+  const value = useMemo(
+    () => ({ price, loading, refresh }),
+    [price, loading, refresh],
+  );
 
   return (
-    <XlmPriceContext.Provider value={{ price, loading }}>
-      {children}
-    </XlmPriceContext.Provider>
+    <XlmPriceContext.Provider value={value}>{children}</XlmPriceContext.Provider>
   );
 }
 
