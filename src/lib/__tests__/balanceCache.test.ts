@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   saveSnapshot,
   getSnapshots,
+  clearSnapshots,
+  purgeSnapshots,
+  exportSnapshots,
   pruneExpiredSnapshots,
   type BalanceSnapshot,
 } from "../balanceCache";
@@ -166,5 +169,32 @@ describe("balanceCache expiry (#713)", () => {
     const result = await getSnapshots("GA");
 
     expect(result.map((s) => s.timestamp)).toEqual([fresh.timestamp]);
+  });
+
+  it("exports every stored snapshot for one address as serializable records", async () => {
+    const old = snap("GA", daysAgo(120));
+    const recent = snap("GA", daysAgo(2));
+    const other = snap("GB", daysAgo(1));
+    seed(old, recent, other);
+
+    const exported = await exportSnapshots("GA");
+
+    expect(exported).toEqual([old, recent]);
+    expect(JSON.parse(JSON.stringify(exported))).toEqual([old, recent]);
+  });
+
+  it("purges every snapshot for one address while preserving other addresses", async () => {
+    const a1 = snap("GA", daysAgo(120));
+    const a2 = snap("GA", daysAgo(2));
+    const b = snap("GB", daysAgo(1));
+    seed(a1, a2, b);
+
+    await purgeSnapshots("GA");
+
+    expect(storedKeys()).toEqual([`GB@${b.timestamp}`]);
+
+    // Existing wallet-disconnect callers keep using the compatible name.
+    await clearSnapshots("GB");
+    expect(storedKeys()).toEqual([]);
   });
 });

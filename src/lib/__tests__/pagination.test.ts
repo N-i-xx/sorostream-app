@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DASHBOARD_PAGE_SIZE,
   clampPage,
+  clampPageWithInfo,
   getTotalPages,
   usePagination,
 } from "@/src/lib/pagination";
@@ -28,6 +29,16 @@ describe("clampPage", () => {
     expect(clampPage(2, 3)).toBe(2);
     expect(clampPage(5, 3)).toBe(3);
     expect(clampPage(Number.NaN, 3)).toBe(1);
+  });
+});
+
+describe("clampPageWithInfo", () => {
+  it("reports when it clamps an out-of-range page", () => {
+    expect(clampPageWithInfo(8, 3)).toEqual({ page: 3, wasClamped: true });
+  });
+
+  it("reports when the requested page is already valid", () => {
+    expect(clampPageWithInfo(2, 3)).toEqual({ page: 2, wasClamped: false });
   });
 });
 

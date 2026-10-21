@@ -2,27 +2,21 @@
  * IndexedDB utility for storing and retrieving balance history snapshots
  *
  * ## Purpose
- * This module is the **long-term, time-series history store**. It persists
- * balance snapshots over time so the UI can render historical charts, compute
- * period-over-period changes (`calculatePeriodChange`) and filter by ranges
- * such as 1D/7D/30D/90D/ALL (`filterByTimeRange`). Snapshots are keyed by
- * timestamp and retained for a configurable window (see `cleanupOldSnapshots`,
- * default 90 days).
+ * This store holds aggregate portfolio history: total balance, token balances,
+ * and stream count. Callers use it for period changes and filters such as
+ * 1D/7D/30D/90D/ALL. `cleanupOldSnapshots` can remove records older than its
+ * requested window (90 days by default).
  *
  * ## When to use this vs. `balanceCache.ts`
- * - Use **this module** when you need a durable, append-only series of past
- *   balances for analytics, charts, or trend calculations.
- * - Use **`balanceCache.ts`** when you need a short-lived, latest-value cache
- *   for fast reads of the *current* balance (e.g. avoiding redundant network
- *   calls). It is not intended to be queried as a time series.
+ * - Use **this module** for aggregate portfolio history and period changes.
+ * - Use **`balanceCache.ts`** for per-address asset balance snapshots used by
+ *   the portfolio cache and its chart.
  *
  * ## Relationship to `balanceCache.ts`
- * The two stores intentionally serve distinct use cases (history vs. cache),
- * but their `BalanceSnapshot` shapes and IndexedDB plumbing overlap. That
- * overlap is **legacy duplication slated for consolidation** — see the related
- * consolidation/duplication enhancement tracking issue. Until that lands, keep
- * the two modules consistent: if you change the snapshot shape or storage
- * semantics here, check whether `balanceCache.ts` needs the same change.
+ * The schemas are similar in name, but not interchangeable: this record's
+ * aggregate fields differ from the per-address balance map in `balanceCache`.
+ * Both stores are local IndexedDB time series and neither is a permanent
+ * archive. Keep the distinction clear when changing either module.
  */
 
 const DB_NAME = "SoroStreamBalanceHistory";

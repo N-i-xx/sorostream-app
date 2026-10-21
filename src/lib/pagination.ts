@@ -18,6 +18,15 @@ export function clampPage(page: number, totalPages: number): number {
   return Math.min(Math.max(1, Math.floor(page)), Math.max(1, totalPages));
 }
 
+/** Clamp a page and report whether the resulting page differs from the input. */
+export function clampPageWithInfo(
+  page: number,
+  totalPages: number,
+): { page: number; wasClamped: boolean } {
+  const clampedPage = clampPage(page, totalPages);
+  return { page: clampedPage, wasClamped: clampedPage !== page };
+}
+
 /**
  * Page-based pagination state.
  *

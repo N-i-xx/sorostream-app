@@ -13,27 +13,23 @@
  * writes to at most one snapshot per hour per address) and read back to render
  * the balance trend chart. Entries are short-lived: they are pruned on read
  * once they fall outside the 90-day lookback window, and can be dropped
- * wholesale via `clearSnapshots` (e.g. on wallet disconnect).
+ * wholesale via `purgeSnapshots` (e.g. on wallet disconnect or when the user
+ * wants to remove local data before handing off a shared computer).
  *
  * ## balanceCache vs. balanceHistory
  *
- * `src/lib/balanceHistory.ts` is a *separate* store with a deliberately
- * different role: it holds the user-facing, append-only history that backs the
- * "Balance history" screen and export flows, where entries are expected to
- * persist and be queried by explicit date ranges rather than being silently
- * expired. The two stores are NOT interchangeable:
+ * `src/lib/balanceHistory.ts` is a separate store with a different record
+ * shape and purpose. This store keeps per-address asset balances for the
+ * portfolio cache; balanceHistory keeps aggregate totals, token balances,
+ * and stream counts for historical analytics. Both retain data for 90 days,
+ * so neither is a durable archive. The two stores are not interchangeable:
  *
- * - Use `balanceCache` when you need a cheap, self-expiring cache of recent
- *   snapshots to avoid redundant Horizon calls (charts, dashboards).
- * - Use `balanceHistory` when you need durable, user-visible history that
- *   should survive cache eviction and be listed/exported.
+ * - Use `balanceCache` for per-account asset balance snapshots.
+ * - Use `balanceHistory` for aggregate portfolio history and period changes.
  *
  * The overlap in shape (both expose a `BalanceSnapshot`-like record) is
- * intentional for now — they serve distinct use cases — but the duplication is
- * tracked for consolidation in the balance-store consolidation enhancement
- * (see issue #742 and its linked follow-up). Keep the two in sync when either
- * interface changes, and prefer extending `balanceHistory` for anything that
- * must outlive the cache.
+ * intentional: their records answer different questions. Keep this distinction
+ * clear when changing either interface.
  */
 
 const DB_NAME = "sorostream_balance_cache";
@@ -191,16 +187,45 @@ export async function shouldSnapshot(
 /**
  * Clear all snapshots for a given address (e.g. on wallet disconnect).
  */
-export async function clearSnapshots(address: string): Promise<void> {
-  const snapshots = await getSnapshots(address, Infinity);
+export async function purgeSnapshots(address: string): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
-    const store = tx.objectStore(STORE_NAME);
-    for (const s of snapshots) {
-      store.delete([s.address, s.timestamp]);
-    }
+    const request = tx.objectStore(STORE_NAME).index("address").openCursor(IDBKeyRange.only(address));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      cursor.delete();
+      cursor.continue();
+    };
+    request.onerror = () => { db.close(); reject(request.error); };
     tx.oncomplete = () => { db.close(); resolve(); };
     tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+/** Backwards-compatible name for clearing an address's cached snapshots. */
+export async function clearSnapshots(address: string): Promise<void> {
+  return purgeSnapshots(address);
+}
+
+/** Export every stored snapshot for `address`, including snapshots past the chart lookback. */
+export async function exportSnapshots(address: string): Promise<BalanceSnapshot[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const request = tx.objectStore(STORE_NAME).index("address").openCursor(IDBKeyRange.only(address));
+    const results: BalanceSnapshot[] = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        db.close();
+        resolve(results);
+        return;
+      }
+      results.push(cursor.value as BalanceSnapshot);
+      cursor.continue();
+    };
+    request.onerror = () => { db.close(); reject(request.error); };
   });
 }
