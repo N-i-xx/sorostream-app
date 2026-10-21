@@ -324,13 +324,27 @@ function NewStreamWizard() {
     !!recipient &&
     /^G[A-Z2-7]{55}$/.test(recipient) &&
     senderContacts.some((c) => c.address.toLowerCase() === recipient.toLowerCase());
-  const recipientApproved = isRecipientApproved(recipient, senderKey);
-  const recipientWhitelistError =
-    !recipient || recipientInBook
-      ? ""
-      : whitelistEnforced && !recipientApproved
+
+  /**
+   * Whitelist rejection message for an arbitrary address (#432).
+   *
+   * Exposed as a function so the recipient field can re-run the check against
+   * the value the user is currently typing, not just against the committed
+   * `recipient` state — otherwise a stale whitelist message survives the user
+   * correcting the address (#599).
+   */
+  function whitelistErrorFor(value: string): string {
+    if (!value || !/^G[A-Z2-7]{55}$/.test(value)) return "";
+    const inBook = senderContacts.some(
+      (c) => c.address.toLowerCase() === value.toLowerCase(),
+    );
+    if (inBook) return "";
+    return whitelistEnforced && !isRecipientApproved(value, senderKey)
       ? "Recipient is not in your approved list. Add them via the Address Book to continue."
       : "";
+  }
+
+  const recipientWhitelistError = whitelistErrorFor(recipient);
 
   function handleQuickSaveRecipient() {
     if (!recipient || !/^G[A-Z2-7]{55}$/.test(recipient)) return;
@@ -537,7 +551,27 @@ function NewStreamWizard() {
   // Deposit cap validation (#526)
   const [depositCapStroops, setDepositCapStroops] = useState<number | null>(null);
   const [capLoading, setCapLoading] = useState(false);
-  const [capError, setCapError] = useState("");
+
+  /**
+   * Full validation for the amount field: the format rules plus the
+   * contract's maximum deposit cap (#526).
+   *
+   * This is the single source of truth for the amount error, so
+   * re-validating on every input change clears the message exactly when the
+   * amount becomes acceptable (#599).
+   */
+  function validateAmountField(value: string): string {
+    const formatError = validateAmount(value);
+    if (formatError) return formatError;
+    if (depositCapStroops !== null && depositCapStroops > 0) {
+      const amountStroops = Math.round(parseFloat(value) * 10_000_000);
+      if (amountStroops > depositCapStroops) {
+        const capFormatted = (depositCapStroops / 10_000_000).toLocaleString();
+        return `Amount exceeds the contract's maximum deposit cap of ${capFormatted} ${selectedToken}. Please enter a lower amount.`;
+      }
+    }
+    return "";
+  }
 
   // Fetch collateral config and new-sender status once when reaching review step
   useEffect(() => {
@@ -563,7 +597,6 @@ function NewStreamWizard() {
     if (step !== "amount") return;
     let cancelled = false;
     setCapLoading(true);
-    setCapError("");
     getStreamCapConfig()
       .then(({ maxDepositStroops }) => {
         if (!cancelled) setDepositCapStroops(maxDepositStroops);
@@ -581,7 +614,7 @@ function NewStreamWizard() {
 
   function handleTemplateSelect(seconds: number, suggestedAmount?: string, recipientOverride?: string, tokenOverride?: string, cliffDateOverride?: string) {
     setDuration(seconds);
-    setErrors((prev) => ({ ...prev, duration: "" }));
+    setErrors((prev) => ({ ...prev, duration: validateDuration(seconds) }));
     const newAmount = suggestedAmount ?? amount;
     const newRecipient =
       recipientOverride && /^G[A-Z2-7]{55}$/.test(recipientOverride)
@@ -589,11 +622,11 @@ function NewStreamWizard() {
         : recipient;
     if (suggestedAmount) {
       setAmount(suggestedAmount);
-      setErrors((prev) => ({ ...prev, amount: "" }));
+      setErrors((prev) => ({ ...prev, amount: validateAmountField(suggestedAmount) }));
     }
     if (recipientOverride && /^G[A-Z2-7]{55}$/.test(recipientOverride)) {
       setRecipient(recipientOverride);
-      setErrors((prev) => ({ ...prev, recipient: "" }));
+      setErrors((prev) => ({ ...prev, recipient: validateRecipientField(recipientOverride) }));
     }
     if (tokenOverride && SUPPORTED_TOKENS.some((t) => t.symbol === tokenOverride)) {
       setSelectedToken(tokenOverride);
@@ -605,54 +638,79 @@ function NewStreamWizard() {
     persist({ duration: seconds, amount: newAmount, recipient: newRecipient });
   }
 
+  /**
+   * Full validation for the recipient field: address format plus the sender's
+   * recipient whitelist (#432).
+   *
+   * Used both when submitting and when re-validating on input change so the
+   * two never disagree about why a recipient is (or is not) acceptable.
+   */
+  function validateRecipientField(value: string): string {
+    return validateRecipient(value) || whitelistErrorFor(value);
+  }
+
   function handleRecipientBlur() {
     setTouched((prev) => ({ ...prev, recipient: true }));
-    setErrors((prev) => ({ ...prev, recipient: validateRecipient(recipient) }));
+    setErrors((prev) => ({ ...prev, recipient: validateRecipientField(recipient) }));
   }
 
   function handleAmountBlur() {
     setTouched((prev) => ({ ...prev, amount: true }));
-    setErrors((prev) => ({ ...prev, amount: validateAmount(amount) }));
+    setErrors((prev) => ({ ...prev, amount: validateAmountField(amount) }));
+  }
+
+  /**
+   * Re-validate a field after the user edits it (#599).
+   *
+   * Once a field has been touched (the user blurred it, or an error was
+   * raised for it) the error message must track the current value: it is
+   * cleared as soon as the value becomes valid, and refreshed when it stays
+   * invalid. Fields the user has not interacted with yet keep whatever state
+   * they had — no error is raised for them before the first blur.
+   */
+  function revalidate(
+    field: "recipient" | "amount",
+    value: string,
+    validate: (v: string) => string,
+  ) {
+    setErrors((prev) => {
+      // A field that has never been touched and has no message on screen is
+      // left alone: no error is raised before the user has finished editing.
+      if (!touched[field] && !prev[field]) return prev;
+      return { ...prev, [field]: validate(value) };
+    });
   }
 
   function goNext() {
     if (step === "recipient") {
-      const err = validateRecipient(recipient);
+      // Covers both the address format and whitelist enforcement (#432).
+      const err = validateRecipientField(recipient);
       if (err) {
         setErrors((prev) => ({ ...prev, recipient: err }));
         setTouched((prev) => ({ ...prev, recipient: true }));
         return;
       }
-      // Whitelist enforcement (#432)
-      if (recipientWhitelistError) {
-        setErrors((prev) => ({ ...prev, recipient: recipientWhitelistError }));
-        return;
-      }
       setStep("amount");
     } else if (step === "amount") {
-      const aErr = validateAmount(amount);
+      const aErr = validateAmountField(amount);
       const dErr = validateDuration(duration);
       const eErr = validateEndDate(endDate);
       const cErr = validateCliffDate(cliffDate, endDate);
       const sErr = schedulingEnabled ? validateScheduledStart(scheduledStart) : "";
       if (aErr || dErr || eErr || cErr || sErr) {
-        setErrors({ ...errors, amount: aErr, duration: dErr, endDate: eErr, cliffDate: cErr, scheduledStart: sErr });
+        // Mark the amount as touched so that correcting it re-validates and
+        // clears the message instead of leaving it on screen (#599).
+        setTouched((prev) => ({ ...prev, amount: true }));
+        setErrors((prev) => ({
+          ...prev,
+          amount: aErr,
+          duration: dErr,
+          endDate: eErr,
+          cliffDate: cErr,
+          scheduledStart: sErr,
+        }));
         return;
       }
-      // Validate against the contract's maximum deposit cap (#526).
-      // Convert the user-entered amount to stroops (1 unit = 10_000_000 stroops)
-      // and compare against the fetched cap. Only block when the cap is known.
-      if (depositCapStroops !== null && depositCapStroops > 0) {
-        const amountStroops = Math.round(parseFloat(amount) * 10_000_000);
-        if (amountStroops > depositCapStroops) {
-          const capFormatted = (depositCapStroops / 10_000_000).toLocaleString();
-          const capErr = `Amount exceeds the contract's maximum deposit cap of ${capFormatted} ${selectedToken}. Please enter a lower amount.`;
-          setCapError(capErr);
-          setErrors((prev) => ({ ...prev, amount: capErr }));
-          return;
-        }
-      }
-      setCapError("");
       setStep("preview");
     }
   }
@@ -723,15 +781,26 @@ function NewStreamWizard() {
 
   async function handleCreateStream() {
     if (undoCountdown !== null) return;
-    const rErr = validateRecipient(recipient);
-    const aErr = validateAmount(amount);
+    const rErr = validateRecipientField(recipient);
+    const aErr = validateAmountField(amount);
     const dErr = validateDuration(duration);
     const eErr = validateEndDate(endDate);
     const cErr = validateCliffDate(cliffDate, endDate);
     const sErr = schedulingEnabled ? validateScheduledStart(scheduledStart) : "";
     const mErr = validateMetadataUri(metadataUri);
     if (rErr || aErr || dErr || eErr || cErr || sErr || mErr) {
-      setErrors({ recipient: rErr, amount: aErr, duration: dErr, endDate: eErr, cliffDate: cErr, scheduledStart: sErr });
+      // Mark the amount as touched so correcting it re-validates and clears
+      // the message rather than leaving it on screen (#599).
+      setTouched((prev) => ({ ...prev, amount: true }));
+      setErrors((prev) => ({
+        ...prev,
+        recipient: rErr,
+        amount: aErr,
+        duration: dErr,
+        endDate: eErr,
+        cliffDate: cErr,
+        scheduledStart: sErr,
+      }));
       setMetadataUriError(mErr);
       return;
     }
@@ -975,7 +1044,10 @@ function NewStreamWizard() {
                 value={recipient}
                 onChange={(v) => {
                   setRecipient(v);
-                  setErrors((prev) => ({ ...prev, recipient: "" }));
+                  // Re-validate on every keystroke so the message is cleared
+                  // as soon as the address becomes valid, and stays accurate
+                  // while it is still invalid (#599).
+                  revalidate("recipient", v, validateRecipientField);
                   persist({ recipient: v });
                 }}
                 onBlur={handleRecipientBlur}
@@ -991,7 +1063,11 @@ function NewStreamWizard() {
               )}
 
               {/* Address book status (#432) */}
-              {recipient && !errors.recipient && /^G[A-Z2-7]{55}$/.test(recipient) && (
+              {/* Keyed off the address format rather than `errors.recipient`:
+                  when the whitelist rejects the recipient, the "Save to
+                  address book" action is exactly what resolves the error, so
+                  it must stay reachable (#599). */}
+              {recipient && /^G[A-Z2-7]{55}$/.test(recipient) && (
                 <div className="mt-2 flex items-center gap-2 text-xs">
                   {recipientInBook || savedToBook === recipient ? (
                     <span className="text-green-400" data-testid="recipient-in-book">
@@ -1109,11 +1185,9 @@ function NewStreamWizard() {
                   // Prevent negative numbers by removing any minus signs
                   val = val.replace(/^-/, "");
                   setAmount(val);
-                  if (touched.amount) {
-                    setErrors((prev) => ({ ...prev, amount: validateAmount(val) }));
-                  } else {
-                    setErrors((prev) => ({ ...prev, amount: "" }));
-                  }
+                  // Re-validate on every keystroke so the error is cleared as
+                  // soon as the amount is valid (#599).
+                  revalidate("amount", val, validateAmountField);
                   persist({ amount: val });
                 }}
                 onPaste={(e) => {
@@ -1129,9 +1203,10 @@ function NewStreamWizard() {
                   if (cleaned !== pasted && cleaned !== (e.target as HTMLInputElement).value) {
                     e.preventDefault();
                     setAmount(cleaned);
-                    if (touched.amount) {
-                      setErrors((prev) => ({ ...prev, amount: validateAmount(cleaned) }));
-                    }
+                    // Pasting is an edit like any other: re-validate so a
+                    // pasted value clears a stale error (#599).
+                    revalidate("amount", cleaned, validateAmountField);
+                    persist({ amount: cleaned });
                   }
                 }}
                 onBlur={handleAmountBlur}
@@ -1184,7 +1259,9 @@ function NewStreamWizard() {
                 initialSeconds={duration > 0 ? duration : undefined}
                 onChange={(s) => {
                   setDuration(s);
-                  if (s > 0) setErrors((prev) => ({ ...prev, duration: "" }));
+                  // Re-validate on every change so the error tracks the
+                  // current duration instead of going stale (#599).
+                  setErrors((prev) => ({ ...prev, duration: validateDuration(s) }));
                   persist({ duration: s });
                 }}
                 error={errors.duration || undefined}
