@@ -51,6 +51,7 @@ import { useXlmPrice } from "@/src/lib/useXlmPrice";
 import { useWallet } from "@/src/context/WalletContext";
 import { formatCurrency } from "@/src/lib/formatCurrency";
 import { useToast } from "@/src/lib/toast";
+import StatusBadge from "@/components/StatusBadge";
 
 // ── Env-configurable admin wallet addresses ─────────────────────────────────
 // NEXT_PUBLIC_ADMIN_ADDRESSES is a comma-separated list of admin wallets.
@@ -75,20 +76,6 @@ const WALLET_RESTORE_GRACE_MS = 1500;
 
 const STREAM_PAGE_SIZES = [10, 25, 50] as const;
 type StreamPageSize = (typeof STREAM_PAGE_SIZES)[number];
-
-function StatusBadge({ status }: { status: StreamData["status"] }) {
-  const cls =
-    status === "Active"
-      ? "bg-green-900/50 text-green-300"
-      : status === "Ended"
-      ? "bg-gray-700 text-gray-300"
-      : "bg-red-900/50 text-red-300";
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cls}`}>
-      {status}
-    </span>
-  );
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -785,7 +772,7 @@ export default function AdminPage() {
                   paginatedStreams.map((s) => (
                     <tr key={s.id} className="bg-gray-900 hover:bg-gray-800/60 transition-colors">
                       <td className="px-4 py-3 font-mono text-gray-300">#{s.id}</td>
-                      <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
+                      <td className="px-4 py-3"><StatusBadge status={s.status} compact /></td>
                       <td className="px-4 py-3 text-white font-medium">{s.token}</td>
                       <td className="px-4 py-3 font-mono text-gray-400 text-xs">{s.sender}</td>
                       <td className="px-4 py-3 font-mono text-gray-400 text-xs">{s.recipient}</td>

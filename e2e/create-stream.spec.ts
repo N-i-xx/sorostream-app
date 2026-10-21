@@ -268,6 +268,18 @@ test.describe('Create Stream – end date & cliff date validation', () => {
 });
 
 test.describe('Create Stream – wallet not connected', () => {
+  test('mobile header keeps the navigation menu visible without horizontal overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/stream/1');
+
+    const menuButton = page.locator('button[aria-controls="mobile-nav-drawer"]');
+    await expect(menuButton).toBeVisible();
+    await menuButton.click();
+    await expect(page.locator('#mobile-nav-drawer')).toBeVisible();
+    await expect(page.locator('#mobile-nav-drawer').getByRole('link', { name: 'Dashboard' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
   test('nav shows Connect wallet button when no wallet is connected', async ({ page }) => {
     await page.goto('/stream/new');
 

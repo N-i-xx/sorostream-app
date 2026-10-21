@@ -16,6 +16,7 @@ import { formatDateWithTimezone } from "@/src/lib/timezone";
 import { formatTimeRemaining, formatEndedAgo } from "@/src/lib/timeRemaining";
 import StreamTagChips from "@/components/StreamTagChips";
 import { formatDateUtc } from "@/src/lib/timezone";
+import StatusBadge from "@/components/StatusBadge";
 
 /** Streamed-out amount (stroops), frozen while the stream is paused. */
 function streamedSeconds(
@@ -212,25 +213,6 @@ function StreamCardInner({
   })();
   const healthTier = healthScore !== null ? getHealthTier(healthScore) : null;
 
-  /** Colour-coded status badge classes for quick visual scanning. */
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "Active":
-      return "bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-400";
-    case "Paused":
-      return "bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-400";
-    case "Ended":
-    case "Completed":
-      return "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-400";
-    case "Not Started":
-      return "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300";
-    case "Cancelled":
-      return "bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-400";
-    default:
-      return "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400";
-  }
-}
-
   const effectiveStatus = optimisticStatus ?? status;
   const effectiveDeposit = optimisticDeposit ?? deposit;
 
@@ -323,7 +305,7 @@ function statusBadgeClass(status: string): string {
           </button>
           {isScheduled && (
             <span
-              className="text-xs px-2 py-1 rounded-full bg-blue-900/60 text-blue-300 border border-blue-700 flex items-center gap-1"
+              className="text-xs px-2 py-1 rounded-full bg-blue-900 text-blue-100 border border-blue-700 flex items-center gap-1"
               aria-label="Scheduled stream"
               title={`Starts ${new Date((scheduledStartTime ?? 0) * 1000).toLocaleString()} (${formatDateUtc(new Date((scheduledStartTime ?? 0) * 1000))})`}
             >
@@ -342,12 +324,7 @@ function statusBadgeClass(status: string): string {
               Confirming…
             </span>
           )}
-          <span
-            className={`text-xs px-2 py-1 rounded-full ${statusBadgeClass(effectiveStatus)}`}
-            aria-label={`Status: ${effectiveStatus}`}
-          >
-            {effectiveStatus}
-          </span>
+          <StatusBadge status={effectiveStatus} compact />
           {healthScore !== null && healthTier !== null && (() => {
             const now = Date.now();
             const totalDuration = endTime && startTime ? new Date(endTime).getTime() - new Date(startTime).getTime() : 0;

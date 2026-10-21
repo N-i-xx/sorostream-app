@@ -6,6 +6,7 @@ import { sorostream } from "@/src/lib/sorostream";
 import { useRpcFetch } from "@/src/lib/useRpcFetch";
 import { useSettings } from "@/src/context/SettingsContext";
 import { useTranslations } from "@/src/lib/i18n";
+import { useWallet } from "@/src/context/WalletContext";
 
 interface LiveCounterProps {
   flowRate: number;
@@ -79,6 +80,7 @@ export default function LiveCounter({
     // fallback to "en" when context is not available (e.g. in tests)
   }
   const rpcFetch = useRpcFetch();
+  const { address: walletAddress } = useWallet();
   const rootRef = useRef<HTMLSpanElement>(null);
   // Off-screen instances skip updates entirely; default true so environments
   // without IntersectionObserver keep working.
@@ -123,6 +125,17 @@ export default function LiveCounter({
     setClaimable(next.amount);
   }, [flowRate, lastWithdrawTime]);
 
+  // A wallet change invalidates this instance's displayed reconciliation cache.
+  // Re-seed from the current stream props immediately while the fresh chain read runs.
+  useEffect(() => {
+    const next = {
+      amount: estimateClaimable(flowRate, lastWithdrawTime, status, pausedAt),
+      timestamp: Date.now(),
+    };
+    setBaseline(next);
+    setClaimable(next.amount);
+  }, [walletAddress, flowRate, lastWithdrawTime, status, pausedAt]);
+
   // Periodically reconcile against the chain value, with rate-limit handling.
   // Skipped while off-screen; reconciles immediately when it scrolls back in.
   useEffect(() => {
@@ -153,7 +166,7 @@ export default function LiveCounter({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [streamId, reconcileIntervalMs, rpcFetch, isVisible]);
+  }, [streamId, reconcileIntervalMs, rpcFetch, isVisible, walletAddress]);
 
   // Interpolate locally, committing at most one update per
   // DISPLAY_UPDATE_INTERVAL_MS. The value is computed from the baseline and

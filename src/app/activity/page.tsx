@@ -353,7 +353,7 @@ function ActivityPageContent() {
           </div>
         ) : events.length === 0 ? (
           <div className="bg-gray-800 rounded-xl p-10 text-center flex flex-col items-center gap-4 border border-gray-700">
-            <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="No activity yet">
               <circle cx="40" cy="40" r="36" fill="#1f2937" stroke="#374151" strokeWidth="2" />
               <path d="M26 40 L54 40 M40 26 L40 54" stroke="#4b5563" strokeWidth="3" strokeLinecap="round" />
             </svg>

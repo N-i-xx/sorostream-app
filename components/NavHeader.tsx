@@ -169,6 +169,20 @@ export default function NavHeader() {
           >
             SoroStream
           </Link>
+          <button
+            type="button"
+            onClick={() => setMenuOpen(true)}
+            className="sm:hidden inline-flex h-9 w-9 items-center justify-center rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 shrink-0"
+            aria-label={t("main_navigation")}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-nav-drawer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="18" x2="20" y2="18" />
+            </svg>
+          </button>
           {/* Nav wraps onto a second line instead of overflowing into the
               wallet controls on medium-width viewports (#542). */}
           <nav className="hidden sm:flex flex-wrap items-center gap-x-2 sm:gap-x-3 lg:gap-x-4 gap-y-1 min-w-0" aria-label={t("main_navigation")}>
@@ -300,8 +314,7 @@ export default function NavHeader() {
         </div>
       </div>
     )}
-    {menuOpen && (
-      <div className="fixed inset-0 z-[60] md:hidden">
+    <div className={`fixed inset-0 z-[60] md:hidden ${menuOpen ? "" : "hidden"}`}>
         <div className="absolute inset-0 bg-black/50" onClick={() => setMenuOpen(false)} aria-hidden="true" />
         <div
           ref={drawerRef}
@@ -351,8 +364,7 @@ export default function NavHeader() {
             </ul>
           </nav>
         </div>
-      </div>
-    )}
+    </div>
     <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
     </>
   );

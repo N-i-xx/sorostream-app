@@ -1267,7 +1267,7 @@ function DashboardContent() {
               <EmptyStreamsIllustration />
             ) : state === "filtered-empty" ? (
               <div className="bg-gray-800 rounded-xl p-10 text-center flex flex-col items-center gap-4">
-                <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="No streams match your current filters">
                   <circle cx="40" cy="40" r="36" fill="#1f2937" stroke="#374151" strokeWidth="2" />
                   <circle cx="36" cy="36" r="14" stroke="#6b7280" strokeWidth="3" fill="none" />
                   <path d="M46 46 L56 56" stroke="#6b7280" strokeWidth="3" strokeLinecap="round" />

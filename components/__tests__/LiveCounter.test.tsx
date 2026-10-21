@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import LiveCounter from '../LiveCounter';
 import { sorostream } from '@/src/lib/sorostream';
 
+const wallet = vi.hoisted(() => ({ address: 'GAAAA' as string | null }));
+vi.mock('@/src/context/WalletContext', () => ({
+  useWallet: () => ({ address: wallet.address }),
+}));
+
 const mockRpcFetch = vi.fn((fn: any) => fn());
 vi.mock('@/src/lib/useRpcFetch', () => ({
   useRpcFetch: () => mockRpcFetch,
@@ -14,6 +19,7 @@ vi.mock('@/components/FiatDisplay', () => ({
 
 describe('LiveCounter', () => {
   beforeEach(() => {
+    wallet.address = 'GAAAA';
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-25T00:00:00.000Z'));
   });
@@ -60,6 +66,29 @@ describe('LiveCounter', () => {
     });
 
     expect(screen.getByLabelText('Claimable: 15.0000000 USDC')).toBeInTheDocument();
+  });
+
+  it('refreshes claimable balance when the active wallet changes', async () => {
+    const getClaimable = vi.spyOn(sorostream, 'getClaimable')
+      .mockResolvedValueOnce('50000000')
+      .mockResolvedValueOnce('90000000');
+    const props = {
+      streamId: 'stream-wallet-switch',
+      flowRate: 0,
+      lastWithdrawTime: new Date('2026-06-25T00:00:00.000Z'),
+      reconcileIntervalMs: 60_000,
+    };
+    const { rerender } = render(<LiveCounter {...props} />);
+    await act(async () => {});
+    expect(screen.getByLabelText('Claimable: 5.0000000 USDC')).toBeInTheDocument();
+
+    wallet.address = 'GBBBB';
+    rerender(<LiveCounter {...props} />);
+    await act(async () => {});
+
+    expect(getClaimable).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText('Claimable: 9.0000000 USDC')).toBeInTheDocument();
+    wallet.address = 'GAAAA';
   });
 
   it('freezes the balance while the stream is paused', async () => {

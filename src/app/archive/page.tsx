@@ -13,20 +13,9 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { getArchivedStreams, formatStellarAmount, type StreamData } from "@/src/lib/sorostream";
 import { useLocaleDateFormat } from "@/src/lib/dateFormat";
+import StatusBadge from "@/components/StatusBadge";
 
 const PAGE_SIZE = 10;
-
-function StatusBadge({ status }: { status: StreamData["status"] }) {
-  const color =
-    status === "Ended"
-      ? "bg-gray-700 text-gray-300"
-      : "bg-red-900/50 text-red-300";
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>
-      {status}
-    </span>
-  );
-}
 
 export default function ArchivePage() {
   const { formatDate } = useLocaleDateFormat();
@@ -151,7 +140,8 @@ export default function ArchivePage() {
               viewBox="0 0 80 80"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
+              role="img"
+              aria-label={hasFilters ? "No archived streams match your filters" : "No archived streams yet"}
             >
               <circle cx="40" cy="40" r="36" fill="#1f2937" stroke="#374151" strokeWidth="2" />
               <path
@@ -207,7 +197,7 @@ export default function ArchivePage() {
                       </td>
                       <td className="px-4 py-3 text-gray-400">{formatDate(s.endTime)}</td>
                       <td className="px-4 py-3">
-                        <StatusBadge status={s.status} />
+                        <StatusBadge status={s.status} compact />
                       </td>
                       <td className="px-4 py-3">
                         <Link
@@ -232,7 +222,7 @@ export default function ArchivePage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-sm text-gray-300">#{s.id}</span>
-                    <StatusBadge status={s.status} />
+                    <StatusBadge status={s.status} compact />
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">Token</span>
