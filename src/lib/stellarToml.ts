@@ -112,6 +112,25 @@ function writeCache(address: string, result: string | null): void {
 }
 
 /**
+ * Drop any cached [[ACCOUNTS]] display name for `address` (issue #725).
+ *
+ * A cached alias is only as trustworthy as the account it decorates: when a
+ * later verification pass for the same address fails or flags it unverified
+ * (see `addressVerification.ts`), the UI must fall back to the raw address
+ * instead of continuing to show the friendly name from an earlier
+ * verification of a healthy account. Addresses that keep verifying cleanly
+ * are unaffected — their cached alias is simply left alone.
+ */
+export function invalidateTomlDisplayName(address: string): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.removeItem(SESSION_PREFIX + address);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+/**
  * Resolve a human-readable display name for `address` from any probed
  * domain's stellar.toml [[ACCOUNTS]] list. Returns null when no entry exists,
  * on timeout, or on any network/parse error.
