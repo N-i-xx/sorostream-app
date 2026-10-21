@@ -4,6 +4,7 @@ import {
   writePersistedStreamError,
   clearPersistedStreamError,
   clearPersistedStreamErrorOnSuccess,
+  MAX_PERSISTED_STREAM_ERRORS,
 } from "../errorPersist";
 
 const STREAM_A = "stream-a";
@@ -48,6 +49,25 @@ describe("errorPersist", () => {
   it("ignores an empty stream id", () => {
     writePersistedStreamError("", "should not be stored");
     expect(readPersistedStreamError("")).toBeNull();
+  });
+
+  it("evicts the least recently used persisted error when the limit is exceeded", () => {
+    writePersistedStreamError("oldest", "Old error.");
+    for (let i = 1; i < MAX_PERSISTED_STREAM_ERRORS; i++) {
+      writePersistedStreamError(`stream-${i}`, `Error ${i}.`);
+    }
+
+    // Reading an entry makes it recent, so the next write evicts the next-oldest.
+    expect(readPersistedStreamError("oldest")).toBe("Old error.");
+    writePersistedStreamError("newest", "Newest error.");
+
+    expect(readPersistedStreamError("stream-1")).toBeNull();
+    expect(readPersistedStreamError("oldest")).toBe("Old error.");
+    expect(readPersistedStreamError("newest")).toBe("Newest error.");
+    const persistedCount = Object.keys(sessionStorage).filter((key) =>
+      key.startsWith("sorostream_stream_error_"),
+    ).length;
+    expect(persistedCount).toBe(MAX_PERSISTED_STREAM_ERRORS);
   });
 });
 

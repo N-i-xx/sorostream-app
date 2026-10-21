@@ -16,16 +16,40 @@
  */
 
 const STORAGE_PREFIX = "sorostream_stream_error_";
+/** Keep only the most recently used stream errors for this browser session. */
+export const MAX_PERSISTED_STREAM_ERRORS = 50;
 
 function keyFor(streamId: string): string {
   return `${STORAGE_PREFIX}${streamId}`;
+}
+
+function trimOldestErrors(): void {
+  const storage = window.sessionStorage;
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key?.startsWith(STORAGE_PREFIX)) keys.push(key);
+  }
+  while (keys.length > MAX_PERSISTED_STREAM_ERRORS) {
+    storage.removeItem(keys.shift()!);
+  }
+}
+
+function touchError(key: string, message: string): void {
+  const storage = window.sessionStorage;
+  storage.removeItem(key);
+  storage.setItem(key, message);
+  trimOldestErrors();
 }
 
 /** Read the persisted error message for `streamId`, or null if none / unavailable. */
 export function readPersistedStreamError(streamId: string): string | null {
   if (typeof window === "undefined" || !streamId) return null;
   try {
-    return window.sessionStorage.getItem(keyFor(streamId));
+    const key = keyFor(streamId);
+    const message = window.sessionStorage.getItem(key);
+    if (message !== null) touchError(key, message);
+    return message;
   } catch {
     return null;
   }
@@ -35,7 +59,7 @@ export function readPersistedStreamError(streamId: string): string | null {
 export function writePersistedStreamError(streamId: string, message: string): void {
   if (typeof window === "undefined" || !streamId) return;
   try {
-    window.sessionStorage.setItem(keyFor(streamId), message);
+    touchError(keyFor(streamId), message);
   } catch {
     // sessionStorage may be unavailable (private mode quota, security policy)
   }
