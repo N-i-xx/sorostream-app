@@ -9,14 +9,19 @@ interface NetworkContextType {
   setNetwork: (network: Network) => void;
 }
 
-export const NETWORK_CONFIG: Record<Network, { rpcUrl: string; label: string }> = {
+export const NETWORK_CONFIG: Record<
+  Network,
+  { rpcUrl: string; label: string; networkPassphrase: string }
+> = {
   testnet: {
     rpcUrl: "https://soroban-testnet.stellar.org",
     label: "Testnet",
+    networkPassphrase: "Test SDF Network ; September 2015",
   },
   mainnet: {
     rpcUrl: "https://soroban-mainnet.stellar.org",
     label: "Mainnet",
+    networkPassphrase: "Public Global Stellar Network ; September 2015",
   },
 };
 
