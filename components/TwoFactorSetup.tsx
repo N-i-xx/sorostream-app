@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import QRCode from "qrcode";
 import {
@@ -14,6 +14,30 @@ import {
 } from "@/src/lib/totp";
 
 type SetupStep = "intro" | "scan" | "verify" | "recovery" | "complete";
+
+/**
+ * Set when a setup attempt is abandoned (cancelled or navigated away from)
+ * after its secret was shown, so the user may already have an authenticator
+ * entry for it. Holds no secret, only the fact.
+ */
+export const ABANDONED_SETUP_KEY = "sorostream-2fa-abandoned-setup";
+
+function readAbandonedFlag(): boolean {
+  try {
+    return localStorage.getItem(ABANDONED_SETUP_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeAbandonedFlag(abandoned: boolean): void {
+  try {
+    if (abandoned) localStorage.setItem(ABANDONED_SETUP_KEY, "1");
+    else localStorage.removeItem(ABANDONED_SETUP_KEY);
+  } catch {
+    // Storage unavailable: the stale-entry warning is best effort.
+  }
+}
 
 interface TwoFactorSetupProps {
   onComplete: () => void;
@@ -33,23 +57,49 @@ export default function TwoFactorSetup({
   const [verificationCode, setVerificationCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // An earlier attempt was abandoned after showing its secret, so the user's
+  // authenticator may hold an entry that will never work.
+  const [previousAttemptAbandoned, setPreviousAttemptAbandoned] = useState(false);
+  // True from the moment a secret is shown until setup completes.
+  const secretShownRef = useRef(false);
 
-  // Generate secret and QR code when entering scan step
   useEffect(() => {
-    if (step === "scan") {
-      const newSecret = generateSecret();
-      setSecret(newSecret);
-      
-      const totpUri = generateTOTPURI(newSecret, accountName);
-      QRCode.toDataURL(totpUri, (err, url) => {
-        if (err) {
-          console.error("Failed to generate QR code:", err);
-        } else {
-          setQrCodeUrl(url);
-        }
-      });
+    setPreviousAttemptAbandoned(readAbandonedFlag());
+    return () => {
+      // Unmounting mid-setup (Cancel, or navigating away) abandons the
+      // secret: a restart generates a new one, so remember to warn.
+      if (secretShownRef.current) writeAbandonedFlag(true);
+    };
+  }, []);
+
+  // Each setup attempt gets one secret: it is generated the first time the
+  // scan step is shown and kept when the user goes back to it from verify,
+  // so a code that was already scanned stays valid. A restarted setup (a new
+  // mount) always generates a fresh secret. The abandoned one is never
+  // stored, so it can't be resumed, and the scan step warns that the old
+  // authenticator entry is stale.
+  useEffect(() => {
+    if (step !== "scan" || secret) return;
+    const newSecret = generateSecret();
+    setSecret(newSecret);
+    secretShownRef.current = true;
+
+    const totpUri = generateTOTPURI(newSecret, accountName);
+    QRCode.toDataURL(totpUri, (err, url) => {
+      if (err) {
+        console.error("Failed to generate QR code:", err);
+      } else {
+        setQrCodeUrl(url);
+      }
+    });
+  }, [step, secret, accountName]);
+
+  useEffect(() => {
+    if (step === "complete") {
+      secretShownRef.current = false;
+      writeAbandonedFlag(false);
     }
-  }, [step, accountName]);
+  }, [step]);
 
   // Generate recovery codes when entering recovery step
   useEffect(() => {
@@ -142,7 +192,16 @@ export default function TwoFactorSetup({
           <p className="text-gray-400 text-sm">
             Open your authenticator app and scan the QR code below:
           </p>
-          
+
+          {previousAttemptAbandoned && (
+            <div role="alert" className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-3">
+              <p className="text-yellow-400 text-xs">
+                This is a new code. If you scanned one during an earlier, unfinished setup, delete
+                that SoroStream entry from your authenticator app: its codes will not work.
+              </p>
+            </div>
+          )}
+
           {qrCodeUrl ? (
             <div className="flex justify-center bg-white p-4 rounded-lg">
               <Image src={qrCodeUrl} alt="TOTP QR Code" width={192} height={192} />
