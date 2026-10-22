@@ -43,6 +43,12 @@ vi.mock("@/src/context/SettingsContext", () => ({
   }),
 }));
 
+// StreamQrModal on the page reads the selected network.
+vi.mock("@/src/lib/network", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/src/lib/network")>()),
+  useNetwork: () => ({ network: "testnet", rpcUrl: "https://soroban-testnet.stellar.org", setNetwork: vi.fn() }),
+}));
+
 vi.mock("@/src/context/XlmPriceContext", () => ({
   useSharedXlmPrice: () => ({ price: null, loading: false }),
 }));

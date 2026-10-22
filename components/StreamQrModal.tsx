@@ -2,7 +2,25 @@
 
 import { useEffect, useRef } from "react";
 import { useFocusTrap } from "@/src/lib/useFocusTrap";
+import { NETWORK_CONFIG, useNetwork, type Network } from "@/src/lib/network";
 import QRCode from "qrcode";
+
+/**
+ * The URI encoded in the recipient QR code.
+ *
+ * A Stellar account (G…) becomes a SEP-7 pay request that names the network
+ * through `network_passphrase`. Without it, wallets assume the public
+ * network, so a testnet user's QR would point at mainnet. Anything else
+ * (e.g. a federation address) is encoded as-is.
+ */
+export function buildRecipientQrUri(recipient: string, network: Network): string {
+  if (!recipient.startsWith("G")) return recipient;
+  const params = new URLSearchParams({
+    destination: recipient,
+    network_passphrase: NETWORK_CONFIG[network].networkPassphrase,
+  });
+  return `web+stellar:pay?${params.toString().replace(/\+/g, "%20")}`;
+}
 
 interface StreamQrModalProps {
   open: boolean;
@@ -17,22 +35,21 @@ export default function StreamQrModal({
 }: StreamQrModalProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const { network } = useNetwork();
 
   useFocusTrap(dialogRef, open, onClose);
 
   useEffect(() => {
     if (!open || !canvasRef.current) return;
 
-    // Encode the recipient's Stellar address so it can be scanned and
-    // shared without wallet access. Falls back to a Stellar URI scheme.
-    const uri = recipient.startsWith("G") ? `stellar:${recipient}` : recipient;
-
-    QRCode.toCanvas(canvasRef.current, uri, {
+    // Regenerated whenever the selected network changes, so the code always
+    // matches the network the user is on.
+    QRCode.toCanvas(canvasRef.current, buildRecipientQrUri(recipient, network), {
       width: 280,
       margin: 2,
       color: { dark: "#ffffff", light: "#1f2937" },
     });
-  }, [open, recipient]);
+  }, [open, recipient, network]);
 
   function handleDownload() {
     if (!canvasRef.current) return;
@@ -76,7 +93,8 @@ export default function StreamQrModal({
         </p>
 
         <p className="text-gray-600 dark:text-gray-400 text-xs text-center">
-          Scan to get the recipient&apos;s Stellar address
+          Scan to get the recipient&apos;s Stellar address on{" "}
+          <span className="font-semibold">{NETWORK_CONFIG[network].label}</span>
         </p>
 
         <div className="flex gap-3 pt-2">
