@@ -9,7 +9,26 @@ interface TokenBalance {
   symbol: string;
   balance: string;
   issuer?: string;
+  /**
+   * True for an asset that isn't in SUPPORTED_TOKENS, including one that
+   * reuses a supported code under a different issuer. It is shown under its
+   * own code with the raw Horizon balance and a short issuer, never as one
+   * of the supported tokens.
+   */
+  unrecognized?: boolean;
 }
+
+type HorizonBalance = {
+  asset_type: string;
+  asset_code?: string;
+  asset_issuer?: string;
+  balance: string;
+};
+
+const isCreditAsset = (b: HorizonBalance) =>
+  b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12";
+
+const shortIssuer = (issuer: string) => `${issuer.slice(0, 4)}…${issuer.slice(-4)}`;
 
 interface WalletBalanceDisplayProps {
   address: string | null;
@@ -47,7 +66,7 @@ export default function WalletBalanceDisplay({
     try {
       const res = await fetch(`${HORIZON_URL}/accounts/${addr}`);
       if (!res.ok) throw new Error(`Horizon ${res.status}`);
-      const data = await res.json() as { balances?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string; balance: string }> };
+      const data = await res.json() as { balances?: HorizonBalance[] };
 
       const tokenBalances: TokenBalance[] = [];
 
@@ -65,9 +84,11 @@ export default function WalletBalanceDisplay({
           // No trustline for this asset means the account doesn't hold it —
           // omit it rather than showing a fabricated 0.00 balance, or every
           // account would appear to hold every entry in SUPPORTED_TOKENS.
+          // Codes of up to 4 characters (USDC, AQUA, yXLM) are
+          // credit_alphanum4 on Horizon; longer ones are credit_alphanum12.
           const matching = data.balances?.find(
             (b) =>
-              b.asset_type === "credit_alphanum12" &&
+              isCreditAsset(b) &&
               b.asset_code === token.symbol &&
               b.asset_issuer === token.issuer
           );
@@ -79,6 +100,23 @@ export default function WalletBalanceDisplay({
             });
           }
         }
+      }
+
+      // Any other asset the account holds: keep it, labelled by its own
+      // code and issuer, rather than dropping it or passing it off as a
+      // supported token with the same code.
+      for (const b of data.balances ?? []) {
+        if (!isCreditAsset(b) || !b.asset_code || !b.asset_issuer) continue;
+        const supported = SUPPORTED_TOKENS.some(
+          (t) => t.symbol === b.asset_code && t.issuer === b.asset_issuer
+        );
+        if (supported) continue;
+        tokenBalances.push({
+          symbol: b.asset_code,
+          balance: b.balance,
+          issuer: b.asset_issuer,
+          unrecognized: true,
+        });
       }
 
       const balancesStr = JSON.stringify(tokenBalances);
@@ -149,17 +187,35 @@ export default function WalletBalanceDisplay({
             {t("wallet_balance") || "Wallet Balance"}
           </div>
           <div className="space-y-2">
-            {balances.map((token) => (
-              <div key={token.symbol} className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium">{token.symbol}</span>
-                <span className="font-mono">
-                  {parseFloat(token.balance).toLocaleString(language, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 7,
-                  })}
-                </span>
-              </div>
-            ))}
+            {balances.map((token) =>
+              token.unrecognized ? (
+                <div
+                  key={`${token.symbol}:${token.issuer}`}
+                  data-testid="unrecognized-balance"
+                  className="flex justify-between items-center gap-3 text-xs text-gray-600 dark:text-gray-400"
+                >
+                  <span className="font-medium" title={`Issuer ${token.issuer}`}>
+                    {token.symbol}{" "}
+                    <span className="font-mono text-[10px] text-gray-400">
+                      ({shortIssuer(token.issuer ?? "")})
+                    </span>
+                  </span>
+                  <span className="font-mono">
+                    {token.balance} {token.symbol}
+                  </span>
+                </div>
+              ) : (
+                <div key={`${token.symbol}:${token.issuer}`} className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">{token.symbol}</span>
+                  <span className="font-mono">
+                    {parseFloat(token.balance).toLocaleString(language, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 7,
+                    })}
+                  </span>
+                </div>
+              )
+            )}
           </div>
         </div>
       )}
