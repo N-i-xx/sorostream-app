@@ -13,6 +13,15 @@ interface Changelog {
   entries: ChangelogEntry[];
 }
 
+/**
+ * Seen-state is tracked per release, not per entry: this key holds the
+ * changelog `version` the user has seen. Opening the modal marks that whole
+ * version seen as soon as the changelog loads. How far the user scrolled
+ * and how quickly they close it don't matter: opening "What's New" counts
+ * as acknowledging the release, so the unread dot clears and the modal is
+ * not pushed again until a new version ships. Covered by
+ * ChangelogModal.seenState.test.tsx.
+ */
 const STORAGE_KEY = "sorostream-changelog-seen";
 
 /**
