@@ -173,10 +173,12 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps =
   // Clicking outside the dialog (on the backdrop) or pressing Escape should
   // actually dismiss the wizard, not just fast-forward it — otherwise the
   // full-screen backdrop stays mounted and keeps intercepting every click on
-  // the page behind it (nav header included) with no way out.
+  // the page behind it (nav header included) with no way out. Unlike finish(),
+  // this does NOT mark onboarding complete: it's a temporary close, not an
+  // opt-out, so the wizard reopens automatically next time (e.g. on the next
+  // page load) rather than being permanently dismissed.
   const dismiss = useCallback(() => {
     trackEvent({ type: "onboarding_skip", step, stepId: current.id });
-    markComplete();
     setOpen(false);
   }, [step, current.id]);
 
