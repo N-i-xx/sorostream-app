@@ -73,14 +73,16 @@ export default function WalletAnalyticsDashboard({
   const now = Date.now();
   const thirtyDaysAgo = now - 30 * 86_400_000;
 
-  // Identify streams that involve this wallet (sender or recipient prefix match).
-  const walletPrefix = walletAddress.slice(0, 5);
+  // Identify streams that involve this wallet. Compare full addresses — a
+  // short prefix match can collide between two different wallets that merely
+  // share the same leading characters (see #847 for the same bug in
+  // PortfolioSummaryCard).
   const myStreams = useMemo(
     () =>
       streams.filter(
-        (s) => s.sender.startsWith(walletPrefix) || s.recipient.startsWith(walletPrefix),
+        (s) => s.sender === walletAddress || s.recipient === walletAddress,
       ),
-    [streams, walletPrefix],
+    [streams, walletAddress],
   );
 
   /** Metric 1: Total value streamed (outgoing deposits) in the last 30 days. */
@@ -126,9 +128,7 @@ export default function WalletAnalyticsDashboard({
       buckets.push({ date: label, stroops: 0 });
     }
 
-    const incomingStreams = myStreams.filter((s) =>
-      s.recipient.startsWith(walletPrefix),
-    );
+    const incomingStreams = myStreams.filter((s) => s.recipient === walletAddress);
 
     for (const stream of incomingStreams) {
       const startMs = new Date(stream.startTime).getTime();
@@ -158,7 +158,7 @@ export default function WalletAnalyticsDashboard({
     }
 
     return buckets;
-  }, [myStreams, walletPrefix, now]);
+  }, [myStreams, walletAddress, now]);
 
   /** Total earnings over the last 30 days for the chart summary. */
   const totalEarnings30d = dailyEarnings.reduce((s, d) => s + d.stroops, 0);
