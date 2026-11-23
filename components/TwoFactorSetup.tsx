@@ -8,6 +8,7 @@ import {
   generateTOTPURI,
   generateRecoveryCodes,
   validateTOTP,
+  verifyTOTP,
   hashSecret,
   isValidRecoveryCode,
   formatRecoveryCode,
@@ -121,17 +122,14 @@ export default function TwoFactorSetup({
     }
 
     setLoading(true);
-    
-    // Simulate verification (in production, this would call your backend)
-    setTimeout(() => {
-      setLoading(false);
-      // For demo, accept any valid format
-      if (verificationCode === "000000") {
-        setError("Invalid code. Please try again.");
-      } else {
-        setStep("recovery");
-      }
-    }, 1000);
+
+    const isValid = await verifyTOTP(secret, verificationCode);
+    setLoading(false);
+    if (isValid) {
+      setStep("recovery");
+    } else {
+      setError("Invalid code. Please try again.");
+    }
   };
 
   const handleSaveRecoveryCodes = async () => {
