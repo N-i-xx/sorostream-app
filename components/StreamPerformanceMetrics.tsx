@@ -53,6 +53,12 @@ export function calculatePerformanceMetrics(
   for (const s of streams) {
     if (s.status !== "Active" && s.status !== "Paused") continue;
 
+    // A stale "Active" row past its endTime is really expired: getStreamHealth
+    // reports it as Expired (#717). Exclude it from every active-stream metric
+    // so these tiles agree with the health card.
+    const endMs = new Date(s.endTime).getTime();
+    if (s.status === "Active" && (Number.isNaN(endMs) || now.getTime() >= endMs)) continue;
+
     const isSender = s.sender.includes(prefix);
     const isRecipient = s.recipient.includes(prefix);
     if (!isSender && !isRecipient) continue;

@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StreamEventFeed from "../StreamEventFeed";
 
@@ -38,5 +38,25 @@ describe("StreamEventFeed", () => {
     });
     expect(screen.getByText("on Stream #42")).toBeInTheDocument();
     expect(screen.getAllByRole("log")[0].querySelectorAll(":scope > div")).toHaveLength(1);
+  });
+
+  it("re-enables auto-scroll after the user scrolls back within 50px of the top", async () => {
+    render(<StreamEventFeed />);
+    await act(async () => {});
+
+    const feed = screen.getByRole("log");
+    const scrollTo = (scrollTop: number) => {
+      Object.defineProperty(feed, "scrollTop", { value: scrollTop, writable: true, configurable: true });
+      fireEvent.scroll(feed);
+    };
+
+    scrollTo(200);
+    expect(feed.scrollTop).toBe(200);
+
+    scrollTo(50);
+    expect(feed.scrollTop).toBe(50);
+
+    scrollTo(49);
+    expect(feed.scrollTop).toBe(0);
   });
 });
