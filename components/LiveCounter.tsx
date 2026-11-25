@@ -113,7 +113,7 @@ export default function LiveCounter({
   // Initialize to -(throttle interval) so the first update is always immediate.
   const lastAnnounceTimeRef = useRef(-ANNOUNCE_THROTTLE_MS);
   const [ariaLabel, setAriaLabel] = useState(() =>
-    formatUSDCFixed(estimateClaimable(flowRate, lastWithdrawTime))
+    formatUSDCFixed(estimateClaimable(flowRate, lastWithdrawTime, status, pausedAt))
   );
   // Reset baseline when props change (e.g. after a withdrawal).
   useEffect(() => {

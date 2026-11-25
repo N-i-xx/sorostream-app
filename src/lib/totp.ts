@@ -161,23 +161,143 @@ export function generateRecoveryCodes(): string[] {
 }
 
 /**
- * Validate TOTP code (simplified - in production, use a proper TOTP library)
- * This is a placeholder for demonstration. In production, use a library like 'otpauth'
+ * Decode a Base32 string (RFC 4648, no padding) into raw bytes.
+ */
+function base32ToBytes(base32: string): Uint8Array {
+  const normalized = normalizeBase32Secret(base32);
+  let bits = "";
+  for (const char of normalized) {
+    const value = BASE32_ALPHABET.indexOf(char);
+    bits += value.toString(2).padStart(5, "0");
+  }
+  const bytes: number[] = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+  return new Uint8Array(bytes);
+}
+
+/** Map our OTPAlgorithm names to Web Crypto HMAC hash names. */
+function hmacHashName(algorithm: OTPAlgorithm): string {
+  switch (algorithm) {
+    case "SHA256":
+      return "SHA-256";
+    case "SHA512":
+      return "SHA-512";
+    default:
+      return "SHA-1";
+  }
+}
+
+/**
+ * Generate the TOTP code for a given counter (time step), per RFC 6238 /
+ * RFC 4226 (HOTP). Uses Web Crypto's HMAC, so it only runs where
+ * `crypto.subtle` is available (browsers, and Node 19+ globally).
+ */
+async function generateHOTP(
+  secret: string,
+  counter: number,
+  digits: number = TOTP_DEFAULT_DIGITS,
+  algorithm: OTPAlgorithm = TOTP_DEFAULT_ALGORITHM
+): Promise<string> {
+  const keyBytes = base32ToBytes(secret);
+  const counterBytes = new Uint8Array(8);
+  // Counter is encoded as an 8-byte big-endian integer.
+  let counterValue = counter;
+  for (let i = 7; i >= 0; i--) {
+    counterBytes[i] = counterValue & 0xff;
+    counterValue = Math.floor(counterValue / 256);
+  }
+
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    keyBytes,
+    { name: "HMAC", hash: hmacHashName(algorithm) },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", cryptoKey, counterBytes);
+  const hmac = new Uint8Array(signature);
+
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binary =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+
+  const otp = binary % Math.pow(10, digits);
+  return otp.toString().padStart(digits, "0");
+}
+
+/**
+ * Generate the current TOTP code for a secret (RFC 6238). Exposed mainly
+ * for tests; `verifyTOTP` is what callers should use to check a user-entered
+ * code.
+ */
+export async function generateTOTP(
+  secret: string,
+  options: {
+    digits?: number;
+    algorithm?: OTPAlgorithm;
+    period?: number;
+    timestamp?: number;
+  } = {}
+): Promise<string> {
+  const {
+    digits = TOTP_DEFAULT_DIGITS,
+    algorithm = TOTP_DEFAULT_ALGORITHM,
+    period = TOTP_DEFAULT_PERIOD_SECONDS,
+    timestamp = Date.now(),
+  } = options;
+  const counter = Math.floor(timestamp / 1000 / period);
+  return generateHOTP(secret, counter, digits, algorithm);
+}
+
+/**
+ * Validate a user-entered code's *format* only (6 digits). This does not
+ * check the code against the secret — use `verifyTOTP` for that.
  */
 export function validateTOTP(
   secret: string,
   token: string,
   window: number = 1
 ): boolean {
-  // Placeholder implementation
-  // In production, this would:
-  // 1. Get current time
-  // 2. Calculate time steps
-  // 3. Generate HMAC for each step in the window
-  // 4. Compare with provided token
-  
-  // For now, just check format (6 digits)
   return /^\d{6}$/.test(token);
+}
+
+/**
+ * Verify a TOTP code against `secret`, per RFC 6238. Checks the current
+ * time step and `window` steps on either side (to tolerate clock drift),
+ * so a code generated slightly before or after "now" still verifies.
+ */
+export async function verifyTOTP(
+  secret: string,
+  token: string,
+  options: {
+    digits?: number;
+    algorithm?: OTPAlgorithm;
+    period?: number;
+    timestamp?: number;
+    window?: number;
+  } = {}
+): Promise<boolean> {
+  if (!/^\d{6}$/.test(token)) return false;
+
+  const {
+    digits = TOTP_DEFAULT_DIGITS,
+    algorithm = TOTP_DEFAULT_ALGORITHM,
+    period = TOTP_DEFAULT_PERIOD_SECONDS,
+    timestamp = Date.now(),
+    window = 1,
+  } = options;
+
+  const counter = Math.floor(timestamp / 1000 / period);
+  for (let errorWindow = -window; errorWindow <= window; errorWindow++) {
+    const candidate = await generateHOTP(secret, counter + errorWindow, digits, algorithm);
+    if (candidate === token) return true;
+  }
+  return false;
 }
 
 /**
