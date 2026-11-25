@@ -241,4 +241,49 @@ describe("FeeEstimationPanel", () => {
 
     expect(mockSimulate).toHaveBeenCalledTimes(1);
   });
+
+  it("discards a previous successful estimate and shows a fresh loading state on re-activation", async () => {
+    let resolveFirst!: (estimate: ReturnType<typeof makeFeeEstimate>) => void;
+    mockSimulate.mockReturnValueOnce(
+      new Promise<ReturnType<typeof makeFeeEstimate>>((resolve) => {
+        resolveFirst = resolve;
+      }),
+    );
+
+    const { rerender } = render(<FeeEstimationPanel active={true} />);
+    expect(screen.getByLabelText("Loading fee estimate")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirst(makeFeeEstimate({ totalFeeLumens: "0.0000600" }));
+    });
+    expect(screen.getByText("0.0000600 XLM")).toBeInTheDocument();
+
+    let resolveSecond!: (estimate: ReturnType<typeof makeFeeEstimate>) => void;
+    mockSimulate.mockReturnValueOnce(
+      new Promise<ReturnType<typeof makeFeeEstimate>>((resolve) => {
+        resolveSecond = resolve;
+      }),
+    );
+
+    rerender(<FeeEstimationPanel active={false} />);
+    await act(async () => {
+      rerender(<FeeEstimationPanel active={true} />);
+    });
+
+    expect(mockSimulate).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("Loading fee estimate")).toBeInTheDocument();
+    expect(screen.getByLabelText("Estimated transaction fee")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.queryByText("0.0000600 XLM")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Total fee/i)).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveSecond(makeFeeEstimate({ totalFeeLumens: "0.0000777" }));
+    });
+
+    expect(screen.getByText("0.0000777 XLM")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading fee estimate")).not.toBeInTheDocument();
+  });
 });

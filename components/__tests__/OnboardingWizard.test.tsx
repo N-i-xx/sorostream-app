@@ -118,4 +118,22 @@ describe("OnboardingWizard", () => {
     expect(screen.getByText("Step 2 of 5")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /connect your wallet/i })).toBeInTheDocument();
   });
+
+  it("stays on connect-wallet with an error when connect() resolves false without throwing", async () => {
+    mockConnect.mockResolvedValueOnce(false);
+    render(<OnboardingWizard />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    expect(screen.getByText("Step 2 of 5")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
+    });
+
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/wallet connection was not completed/i)).toBeInTheDocument();
+    expect(screen.getByText("Step 2 of 5")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /connect your wallet/i })).toBeInTheDocument();
+    expect(screen.queryByText("Step 3 of 5")).not.toBeInTheDocument();
+  });
 });

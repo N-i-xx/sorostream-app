@@ -44,4 +44,11 @@ describe("RouteErrorFallback", () => {
     expect(screen.getByText(/report the issue if it continues/i)).toBeInTheDocument();
     expect(screen.queryByText(/check your internet connection/i)).not.toBeInTheDocument();
   });
+
+  it("classifies a mixed-case 'Failed to load chunk' message as a network error", () => {
+    render(<RouteErrorFallback error={new Error("Failed to load chunk")} />);
+    expect(screen.getByText(/check your internet connection/i)).toBeInTheDocument();
+    expect(screen.queryByText(/report the issue if it continues/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Failed to load chunk")).toBeInTheDocument();
+  });
 });
