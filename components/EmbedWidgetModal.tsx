@@ -22,6 +22,10 @@ export default function EmbedWidgetModal({ streamId, onClose }: EmbedWidgetModal
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
+  // Pending copied/copyFailed reset timer, and whether we are still mounted.
+  // Both are needed so closing the modal never triggers setState afterwards (#920).
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
   useFocusTrap(modalRef, true, onClose);
 
   // Build the embed URL
@@ -40,16 +44,28 @@ export default function EmbedWidgetModal({ streamId, onClose }: EmbedWidgetModal
   loading="lazy"
 ></iframe>`;
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current);
+    };
+  }, []);
+
   const handleCopy = useCallback(async () => {
     const ok = await copyToClipboard(snippet);
+    // The modal may have been closed while the clipboard write was pending.
+    if (!mountedRef.current) return;
+    // A repeated click restarts the reset window instead of stacking timers.
+    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current);
     if (ok) {
       setCopyFailed(false);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      resetTimerRef.current = setTimeout(() => setCopied(false), 2500);
     } else {
       setCopied(false);
       setCopyFailed(true);
-      setTimeout(() => setCopyFailed(false), 4000);
+      resetTimerRef.current = setTimeout(() => setCopyFailed(false), 4000);
     }
   }, [snippet]);
 
