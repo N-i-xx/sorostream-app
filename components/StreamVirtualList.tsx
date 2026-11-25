@@ -28,6 +28,9 @@ export default function StreamVirtualList({ streams, selectedIds, onToggleSelect
   const savedScrollTop = useRef(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(760);
+  // Actual grid column count: 1 below the `md` breakpoint, 2 at/above it
+  // (matches the `md:grid-cols-2` class on the grid below).
+  const [columnCount, setColumnCount] = useState(1);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -51,6 +54,15 @@ export default function StreamVirtualList({ streams, selectedIds, onToggleSelect
       container.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", updateHeight);
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia("(min-width: 768px)"); // Tailwind `md`
+    const updateColumns = () => setColumnCount(mql.matches ? 2 : 1);
+    updateColumns();
+    mql.addEventListener("change", updateColumns);
+    return () => mql.removeEventListener("change", updateColumns);
   }, []);
 
   useEffect(() => {
@@ -80,14 +92,14 @@ export default function StreamVirtualList({ streams, selectedIds, onToggleSelect
     if (!focusedStreamId || !containerRef.current) return;
     const idx = streams.findIndex((s) => s.id === focusedStreamId);
     if (idx < 0) return;
-    const row = Math.floor(idx / 2);
+    const row = Math.floor(idx / columnCount);
     const targetTop = row * BASE_ROW_HEIGHT;
     const container = containerRef.current;
     const visibleBottom = container.scrollTop + container.clientHeight;
     if (targetTop < container.scrollTop || targetTop + BASE_ROW_HEIGHT > visibleBottom) {
       container.scrollTop = Math.max(0, targetTop - container.clientHeight / 2);
     }
-  }, [focusedStreamId, streams]);
+  }, [focusedStreamId, streams, columnCount]);
 
   /** Keyboard navigation inside the virtual list. */
   const handleKeyDown = useCallback(
@@ -149,7 +161,8 @@ export default function StreamVirtualList({ streams, selectedIds, onToggleSelect
     [streams],
   );
 
-  /** Arrow-key navigation between stream cards (2-column grid). */
+  /** Arrow-key navigation between stream cards, respecting the actual grid
+   *  column count (1 column below `md`, 2 at/above it). */
   const handleItemKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLAnchorElement>, streamId: string) => {
       const currentIndex = streams.findIndex((s) => s.id === streamId);
@@ -158,11 +171,13 @@ export default function StreamVirtualList({ streams, selectedIds, onToggleSelect
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          focusStreamAt(currentIndex + 2 < streams.length ? currentIndex + 2 : currentIndex);
+          focusStreamAt(
+            currentIndex + columnCount < streams.length ? currentIndex + columnCount : currentIndex,
+          );
           break;
         case "ArrowUp":
           e.preventDefault();
-          focusStreamAt(currentIndex - 2 >= 0 ? currentIndex - 2 : currentIndex);
+          focusStreamAt(currentIndex - columnCount >= 0 ? currentIndex - columnCount : currentIndex);
           break;
         case "ArrowRight":
           e.preventDefault();
@@ -175,10 +190,10 @@ export default function StreamVirtualList({ streams, selectedIds, onToggleSelect
         // Enter/Space activate the link natively; no handler needed.
       }
     },
-    [streams, focusStreamAt],
+    [streams, focusStreamAt, columnCount],
   );
 
-  const rowCount = useMemo(() => Math.ceil(streams.length / 2), [streams.length]);
+  const rowCount = useMemo(() => Math.ceil(streams.length / columnCount), [streams.length, columnCount]);
   const totalHeight = rowCount * BASE_ROW_HEIGHT;
 
   const startRow = useMemo(() => {
@@ -193,8 +208,8 @@ export default function StreamVirtualList({ streams, selectedIds, onToggleSelect
   }, [scrollTop, containerHeight, rowCount]);
 
   const visibleStreams = useMemo(
-    () => streams.slice(startRow * 2, endRow * 2),
-    [streams, startRow, endRow],
+    () => streams.slice(startRow * columnCount, endRow * columnCount),
+    [streams, startRow, endRow, columnCount],
   );
 
   return (

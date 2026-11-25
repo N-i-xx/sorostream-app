@@ -60,6 +60,7 @@ export default function WalletBalanceDisplay({
   const [balanceUpdated, setBalanceUpdated] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const prevBalancesRef = useRef<string>("");
+  const balanceUpdatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchBalances = useCallback(async (addr: string) => {
     setBalanceLoading(true);
@@ -124,8 +125,13 @@ export default function WalletBalanceDisplay({
         setBalances(tokenBalances);
         if (prevBalancesRef.current) {
           setBalanceUpdated(true);
-          const timer = setTimeout(() => setBalanceUpdated(false), 2000);
-          return () => clearTimeout(timer);
+          if (balanceUpdatedTimerRef.current) {
+            clearTimeout(balanceUpdatedTimerRef.current);
+          }
+          balanceUpdatedTimerRef.current = setTimeout(() => {
+            setBalanceUpdated(false);
+            balanceUpdatedTimerRef.current = null;
+          }, 2000);
         }
         prevBalancesRef.current = balancesStr;
       }
@@ -145,7 +151,13 @@ export default function WalletBalanceDisplay({
 
     void fetchBalances(address);
     const interval = setInterval(() => void fetchBalances(address), 60_000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (balanceUpdatedTimerRef.current) {
+        clearTimeout(balanceUpdatedTimerRef.current);
+        balanceUpdatedTimerRef.current = null;
+      }
+    };
   }, [address, fetchBalances, balanceRefreshTrigger]);
 
   if (!address) return null;

@@ -40,7 +40,7 @@ interface SubmitResult {
 
 const REQUIRED_HEADERS = ["recipient", "amount", "duration", "cliff_days", "token"] as const;
 
-function parseCSV(text: string): { rows: CsvRow[]; headerError: string | null } {
+export function parseCSV(text: string): { rows: CsvRow[]; headerError: string | null } {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) {
     return { rows: [], headerError: "CSV must have a header row and at least one data row." };
