@@ -72,6 +72,30 @@ describe("ClaimableTooltip", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("stops the periodic refresh when active transitions to false mid-interval (#932)", () => {
+    const { rerender } = render(<ClaimableTooltip stream={stream} active label="Claimable" />);
+
+    // Let a couple of ticks happen first, then flip active to false partway
+    // through a new interval window (not right after a tick), confirming
+    // the component-level wiring (not just the hook in isolation) actually
+    // tears the interval down instead of letting a stale one fire later.
+    act(() => {
+      vi.advanceTimersByTime(12_000); // two full 5s ticks + 2s into the third
+    });
+    const valueAtTransition = tooltipValue();
+    expect(valueAtTransition).toContain("20.0000000");
+
+    rerender(<ClaimableTooltip stream={stream} active={false} label="Claimable" />);
+
+    // Advance well past where the next tick(s) would have landed had the
+    // interval kept running.
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(tooltipValue()).toBe(valueAtTransition);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("refreshes immediately when reopened", () => {
     const { rerender } = render(
       <ClaimableTooltip stream={stream} active={false} label="Claimable" />,
