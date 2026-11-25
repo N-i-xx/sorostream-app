@@ -28,3 +28,51 @@ describe("calculatePerformanceMetrics active-time average", () => {
     expect(metrics.averageRateStroopsPerSec).toBe(10);
   });
 });
+
+describe("calculatePerformanceMetrics with a stale Active stream", () => {
+  const now = new Date("2026-01-01T00:10:00.000Z");
+
+  it("excludes an Active stream whose endTime has already passed", () => {
+    const metrics = calculatePerformanceMetrics([
+      stream({ endTime: "2026-01-01T00:05:00.000Z" }),
+    ], "GBWALLET123", now);
+
+    expect(metrics.activeStreams).toBe(0);
+    expect(metrics.totalStreamedStroops).toBe(0);
+    expect(metrics.totalReceivedStroops).toBe(0);
+    expect(metrics.averageRateStroopsPerSec).toBe(0);
+  });
+
+  it("excludes an Active stream whose endTime is exactly now", () => {
+    const metrics = calculatePerformanceMetrics([
+      stream({ endTime: "2026-01-01T00:10:00.000Z" }),
+    ], "GBWALLET123", now);
+
+    expect(metrics.activeStreams).toBe(0);
+  });
+
+  it("counts only the live stream when a stale Active stream is also present", () => {
+    const metrics = calculatePerformanceMetrics([
+      stream({ id: "stale", endTime: "2026-01-01T00:05:00.000Z" }),
+      stream({ id: "live", recipient: "GOTHER456" }),
+    ], "GBWALLET123", now);
+
+    expect(metrics.activeStreams).toBe(1);
+    expect(metrics.totalStreamedStroops).toBe(6_000);
+    expect(metrics.averageRateStroopsPerSec).toBe(10);
+  });
+
+  it("still represents a Paused stream whose endTime has passed", () => {
+    const metrics = calculatePerformanceMetrics([
+      stream({
+        status: "Paused",
+        endTime: "2026-01-01T00:05:00.000Z",
+        pausedAt: "2026-01-01T00:04:00.000Z",
+        totalPausedSeconds: 60,
+      }),
+    ], "GBWALLET123", now);
+
+    expect(metrics.activeStreams).toBe(0);
+    expect(metrics.totalStreamedStroops).toBe(1_800);
+  });
+});
