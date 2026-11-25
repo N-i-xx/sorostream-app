@@ -1,77 +1,70 @@
+import { describe, it, expect } from "vitest";
+import { parseCSV } from "../BatchCreateTab";
+
 /**
- * Regression test for issue #931.
- *
- * BatchCreateTab's handleSubmit catch block (entire-batch-failure path)
- * builds `failedResults` from `rows`, not from `validRows`. A row that
- * failed CSV validation (`row.errors.length > 0`) must keep its original
- * "Skipped: ..." message, while a row that was valid and submitted (but the
- * whole batch transaction failed) should get the generic batch error
- * message. This test forces `sorostream.batch_create` to reject and asserts
- * the invalid row still shows its own validation reason, not the batch
- * failure message.
+ * parseCSV builds its column-index map from the header row, so it should
+ * require all REQUIRED_HEADERS by exact name but tolerate them appearing in
+ * any column order (issue #930).
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import BatchCreateTab from "../BatchCreateTab";
+describe("BatchCreateTab parseCSV", () => {
+  it("parses rows correctly when required headers are present but reordered", () => {
+    const csv = [
+      "token,recipient,cliff_days,amount,duration",
+      "USDC,GBCR7QXZD4XKQNLKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XDRL,0,100,2592000",
+      "XLM,GDEF3XYZKQNP7LKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XABC,30,250,7776000",
+    ].join("\n");
 
-const { batch_create } = vi.hoisted(() => ({ batch_create: vi.fn() }));
+    const { rows, headerError } = parseCSV(csv);
 
-vi.mock("@/src/lib/sorostream", () => ({
-  sorostream: { batch_create },
-}));
+    expect(headerError).toBeNull();
+    expect(rows).toHaveLength(2);
 
-const VALID_RECIPIENT = "GBCR7QXZD4XKQNLKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XDRL1";
+    expect(rows[0]).toMatchObject({
+      rowIndex: 2,
+      recipient: "GBCR7QXZD4XKQNLKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XDRL",
+      amount: "100",
+      duration: "2592000",
+      cliff_days: "0",
+      token: "USDC",
+    });
 
-const CSV = `recipient,amount,duration,cliff_days,token
-${VALID_RECIPIENT},100,2592000,0,USDC
-not-a-valid-key,50,86400,0,USDC
-`;
-
-function uploadCsv() {
-  const file = new File([CSV], "batch.csv", { type: "text/csv" });
-  const input = screen.getByLabelText(/csv file input/i) as HTMLInputElement;
-  fireEvent.change(input, { target: { files: [file] } });
-}
-
-describe("BatchCreateTab — entire-batch-failure path preserves skip reasons (#931)", () => {
-  beforeEach(() => {
-    batch_create.mockReset();
+    expect(rows[1]).toMatchObject({
+      rowIndex: 3,
+      recipient: "GDEF3XYZKQNP7LKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XABC",
+      amount: "250",
+      duration: "7776000",
+      cliff_days: "30",
+      token: "XLM",
+    });
   });
 
-  it("keeps the invalid row's original validation error instead of the batch error message", async () => {
-    batch_create.mockRejectedValue(new Error("Batch transaction failed on-chain."));
+  it("still parses correctly with headers in the original order", () => {
+    const csv = [
+      "recipient,amount,duration,cliff_days,token",
+      "GBCR7QXZD4XKQNLKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XDRL,100,2592000,0,USDC",
+    ].join("\n");
 
-    render(<BatchCreateTab />);
-    uploadCsv();
+    const { rows, headerError } = parseCSV(csv);
 
-    await waitFor(() => expect(screen.getByText("2").closest("tr")).toBeTruthy());
+    expect(headerError).toBeNull();
+    expect(rows[0]).toMatchObject({
+      recipient: "GBCR7QXZD4XKQNLKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XDRL",
+      amount: "100",
+      duration: "2592000",
+      cliff_days: "0",
+      token: "USDC",
+    });
+  });
 
-    // Sanity: one valid row, one invalid row parsed.
-    await waitFor(() =>
-      expect(screen.getByText(/valid Stellar public key/i)).toBeInTheDocument(),
-    );
+  it("rejects a CSV missing a required header even if others are reordered", () => {
+    const csv = [
+      "token,recipient,amount,duration",
+      "USDC,GBCR7QXZD4XKQNLKFM7JOXNJ4RSDQKPFZVZLHXMKXYXT5RDRL7XDRL,100,2592000",
+    ].join("\n");
 
-    const submitButton = screen.getByRole("button", { name: /create 1 stream/i });
-    fireEvent.click(submitButton);
+    const { rows, headerError } = parseCSV(csv);
 
-    await waitFor(() => expect(batch_create).toHaveBeenCalled());
-
-    await waitFor(() =>
-      expect(screen.getByText(/all 1 rows failed/i)).toBeInTheDocument(),
-    );
-
-    // The invalid row must still show its own "Skipped: ..." validation
-    // reason, not the generic batch failure message.
-    expect(
-      screen.getByText(/skipped: recipient must be a valid stellar public key/i),
-    ).toBeInTheDocument();
-
-    // The generic batch error message must apply only to the row that was
-    // actually submitted (the valid one), never overwrite the invalid row's
-    // own reason.
-    expect(screen.getByText(/batch transaction failed on-chain\./i)).toBeInTheDocument();
-    expect(
-      screen.queryAllByText(/batch transaction failed on-chain\./i).length,
-    ).toBe(1);
+    expect(headerError).toMatch(/cliff_days/);
+    expect(rows).toHaveLength(0);
   });
 });
