@@ -74,6 +74,19 @@ describe("sortActivityEvents — amount column (#852)", () => {
     expect(sorted.map((e) => e.id)).toEqual(["e2", "e1"]);
   });
 
+  it("preserves insertion order for two events that both lack an amount (#938)", () => {
+    const events = [
+      makeEvent({ id: "e1", type: "alert", amount: undefined }),
+      makeEvent({ id: "e2", type: "alert", amount: undefined }),
+    ];
+    const sort = { field: "amount" as const, dir: "desc" as const };
+    const sorted = sortActivityEvents(events, sort);
+
+    // Both default to BigInt(0) and compare equal, so the stable sort must
+    // keep their original relative order.
+    expect(sorted.map((e) => e.id)).toEqual(["e1", "e2"]);
+  });
+
   it("handles integer strings correctly alongside decimal strings", () => {
     const events = [
       makeEvent({ id: "e1", amount: "7" }),
